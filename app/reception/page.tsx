@@ -9,13 +9,16 @@ type Reservation = {
   name: string; menuId: string; memo: string;
   status: ReservationStatus; customPrice?: number;
   gender?: Gender; createdAt: number;
+  customLabel?: string;
 };
-type Menu = { id: string; label: string; minutes: number; price: number; };
+type Menu = { id: string; label: string; minutes: number; price: number; isTask?: boolean; };
 
 const LS_KEY = "enmeidou_reception_v2";
-const OPEN = "08:00";
+const TASK_LABEL_KEY = "enmeidou_task_label";
+const OPEN = "09:00";
 const CLOSE = "22:00";
 const SNAP_MIN = 30;
+const TASK_SNAP_MIN = 15;
 
 const MENUS: Menu[] = [
   { id: "jp_new_120", label: "国内新規（120分）", minutes: 120, price: 9000 },
@@ -25,6 +28,7 @@ const MENUS: Menu[] = [
   { id: "int_r_60", label: "インターナショナルR（60分）", minutes: 60, price: 12000 },
   { id: "stu_new_60", label: "学生新規（高校生迄）（60分）", minutes: 60, price: 6600 },
   { id: "stu_r_45", label: "学生R（高校生迄）（45分）", minutes: 45, price: 4400 },
+  { id: "task", label: "業務", minutes: 15, price: 0, isTask: true },
 ];
 
 function pad2(n: number) { return String(n).padStart(2, "0"); }
@@ -39,11 +43,10 @@ function uid() { return `${Date.now()}_${Math.random().toString(16).slice(2)}`; 
 const openMin = hhmmToMin(OPEN);
 const closeMin = hhmmToMin(CLOSE);
 const totalMin = closeMin - openMin;
-const PX_PER_MIN = 2.2;
 
-function getSlots() {
+function getSlots(snap: number) {
   const out: string[] = [];
-  for (let m = openMin; m <= closeMin; m += SNAP_MIN) out.push(minToHHMM(m));
+  for (let m = openMin; m <= closeMin; m += snap) out.push(minToHHMM(m));
   return out;
 }
 function getLabelSlots() {
@@ -52,8 +55,8 @@ function getLabelSlots() {
   return out;
 }
 
-const BLUE = "rgba(88,166,255,0.9)";
 const GREEN = "rgba(34,197,94,0.9)";
+const BLUE = "rgba(88,166,255,0.9)";
 const BORDER = "rgba(255,255,255,0.10)";
 
 const GENDER_COLORS = {
@@ -63,12 +66,14 @@ const GENDER_COLORS = {
 };
 
 const MENU_COLORS = {
-  jp:  { bg: "linear-gradient(135deg,rgba(88,166,255,0.28),rgba(88,166,255,0.10))",   border: "rgba(88,166,255,0.55)",  badge: "#58a6ff", label: "国内" },
-  int: { bg: "linear-gradient(135deg,rgba(251,191,36,0.28),rgba(251,191,36,0.10))",   border: "rgba(251,191,36,0.55)",  badge: "#fbbf24", label: "INT" },
-  stu: { bg: "linear-gradient(135deg,rgba(167,139,250,0.28),rgba(167,139,250,0.10))", border: "rgba(167,139,250,0.55)", badge: "#a78bfa", label: "学生" },
+  jp:   { bg: "linear-gradient(135deg,rgba(88,166,255,0.28),rgba(88,166,255,0.10))",   border: "rgba(88,166,255,0.55)",  badge: "#58a6ff", label: "国内" },
+  int:  { bg: "linear-gradient(135deg,rgba(251,191,36,0.28),rgba(251,191,36,0.10))",   border: "rgba(251,191,36,0.55)",  badge: "#fbbf24", label: "INT" },
+  stu:  { bg: "linear-gradient(135deg,rgba(167,139,250,0.28),rgba(167,139,250,0.10))", border: "rgba(167,139,250,0.55)", badge: "#a78bfa", label: "学生" },
+  task: { bg: "linear-gradient(135deg,rgba(100,100,100,0.28),rgba(100,100,100,0.10))", border: "rgba(150,150,150,0.55)", badge: "#9ca3af", label: "業務" },
 };
 
-function getMenuColor(menuId: string) {
+function getMenuColor(menuId: string, taskLabel?: string) {
+  if (menuId === "task") return { ...MENU_COLORS.task, label: taskLabel || "業務" };
   if (menuId.startsWith("int")) return MENU_COLORS.int;
   if (menuId.startsWith("stu")) return MENU_COLORS.stu;
   return MENU_COLORS.jp;
@@ -90,30 +95,41 @@ export default function ReceptionPage() {
   const [menuId, setMenuId] = useState(MENUS[0].id);
   const [memo, setMemo] = useState("");
   const [customPriceInput, setCustomPriceInput] = useState<string>("");
+  const [taskLabel, setTaskLabel] = useState("業務");
+  const [editingTaskLabel, setEditingTaskLabel] = useState(false);
   const draggingRef = useRef<{ id: string; startX: number; origMin: number } | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
 
-  function handleMenuChange(newMenuId: string) {
-    setMenuId(newMenuId);
-    const m = MENUS.find(x => x.id === newMenuId);
-    if (m) setCustomPriceInput(String(m.price));
-  }
+  const isTask = menuId === "task";
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
       if (raw) { const p = JSON.parse(raw); if (Array.isArray(p)) setReservations(p); }
+      const savedLabel = localStorage.getItem(TASK_LABEL_KEY);
+      if (savedLabel) setTaskLabel(savedLabel);
     } catch {}
   }, []);
+
   useEffect(() => {
     try { localStorage.setItem(LS_KEY, JSON.stringify(reservations)); } catch {}
   }, [reservations]);
+
+  useEffect(() => {
+    try { localStorage.setItem(TASK_LABEL_KEY, taskLabel); } catch {}
+  }, [taskLabel]);
 
   const menuMap = useMemo(() => {
     const m = new Map<string, Menu>();
     MENUS.forEach(x => m.set(x.id, x));
     return m;
   }, []);
+
+  function handleMenuChange(newMenuId: string) {
+    setMenuId(newMenuId);
+    const m = MENUS.find(x => x.id === newMenuId);
+    if (m) setCustomPriceInput(m.isTask ? "" : String(m.price));
+  }
 
   const dayReservations = useMemo(() =>
     reservations.filter(r => r.date === selectedDate)
@@ -126,7 +142,7 @@ export default function ReceptionPage() {
     let expected = 0, actual = 0;
     reservations.forEach(r => {
       if (monthKey(r.date) !== mk) return;
-      if (r.status === "cancelled") return;
+      if (r.status === "cancelled" || r.menuId === "task") return;
       const price = getPrice(r, menuMap);
       expected += price;
       if (r.status === "done") actual += price;
@@ -158,21 +174,24 @@ export default function ReceptionPage() {
     const map = new Map<string, number>();
     reservations.forEach(r => {
       if (monthKey(r.date) !== mk) return;
-      if (r.status === "cancelled") return;
+      if (r.status === "cancelled" || r.menuId === "task") return;
       map.set(r.date, (map.get(r.date) ?? 0) + 1);
     });
     return map;
   }, [reservations, monthCursor]);
 
   function addReservation() {
-    if (!name.trim()) return;
+    if (!isTask && !name.trim()) return;
     const menu = menuMap.get(menuId) ?? MENUS[0];
-    const endMin = clamp(hhmmToMin(start) + menu.minutes, openMin + SNAP_MIN, closeMin);
+    const snap = isTask ? TASK_SNAP_MIN : SNAP_MIN;
+    const endMin = clamp(hhmmToMin(start) + menu.minutes, openMin + snap, closeMin);
     const cp = customPriceInput !== "" ? Number(customPriceInput) : undefined;
     setReservations(prev => [...prev, {
       id: uid(), date: selectedDate, start, end: minToHHMM(endMin),
-      name: name.trim(), menuId, memo: memo.trim(), status: "todo",
-      customPrice: cp, gender, createdAt: Date.now(),
+      name: isTask ? taskLabel : name.trim(),
+      menuId, memo: memo.trim(), status: "todo",
+      customPrice: cp, gender: isTask ? "none" : gender,
+      createdAt: Date.now(),
     }]);
     setName(""); setMemo(""); setCustomPriceInput(""); setGender("none");
   }
@@ -196,21 +215,29 @@ export default function ReceptionPage() {
     setReservations(prev => prev.filter(r => r.id !== id));
   }
 
+  // タイムライン幅を画面に合わせる
+  const PX_PER_MIN = useMemo(() => {
+    if (typeof window === "undefined") return 1.5;
+    const w = window.innerWidth - 48;
+    return Math.max(1.0, w / totalMin);
+  }, []);
+
   function onMouseDown(e: React.MouseEvent, id: string) {
     e.preventDefault();
     const r = reservations.find(x => x.id === id);
     if (!r) return;
     draggingRef.current = { id, startX: e.clientX, origMin: hhmmToMin(r.start) };
+    const snap = r.menuId === "task" ? TASK_SNAP_MIN : SNAP_MIN;
     function onMouseMove(ev: MouseEvent) {
       if (!draggingRef.current) return;
       const dx = ev.clientX - draggingRef.current.startX;
-      const dMin = Math.round(dx / PX_PER_MIN / SNAP_MIN) * SNAP_MIN;
-      const newStartMin = clamp(draggingRef.current.origMin + dMin, openMin, closeMin - SNAP_MIN);
+      const dMin = Math.round(dx / PX_PER_MIN / snap) * snap;
+      const newStartMin = clamp(draggingRef.current.origMin + dMin, openMin, closeMin - snap);
       setReservations(prev => prev.map(rv => {
         if (rv.id !== draggingRef.current!.id) return rv;
         const dur = (menuMap.get(rv.menuId)?.minutes) ?? (hhmmToMin(rv.end) - hhmmToMin(rv.start));
-        const endMin = clamp(newStartMin + dur, openMin + SNAP_MIN, closeMin);
-        const adjStart = clamp(endMin - dur, openMin, closeMin - SNAP_MIN);
+        const endMin = clamp(newStartMin + dur, openMin + snap, closeMin);
+        const adjStart = clamp(endMin - dur, openMin, closeMin - snap);
         return { ...rv, start: minToHHMM(adjStart), end: minToHHMM(endMin) };
       }));
     }
@@ -224,7 +251,7 @@ export default function ReceptionPage() {
   }
 
   const todayYMD = ymdOf(new Date());
-  const slots = getSlots();
+  const slots30 = getSlots(SNAP_MIN);
   const labelSlots = getLabelSlots();
   const timelineWidth = totalMin * PX_PER_MIN;
   const gc = GENDER_COLORS[gender];
@@ -261,18 +288,18 @@ export default function ReceptionPage() {
         {/* タイムライン */}
         <div style={card()}>
           <div style={{ fontSize: 15, fontWeight: 900, marginBottom: 10 }}>
-            📅 タイムライン <span style={{ opacity: 0.5, fontWeight: 400, fontSize: 13 }}>ブロックをドラッグして時刻変更（30分刻み）</span>
+            📅 タイムライン <span style={{ opacity: 0.5, fontWeight: 400, fontSize: 13 }}>ドラッグで時刻変更（施術30分・業務15分刻み）</span>
           </div>
           <div ref={timelineRef} style={{ overflowX: "auto", paddingBottom: 4 }}>
             <div style={{ width: timelineWidth, minWidth: "100%" }}>
               <div style={{ display: "flex", marginBottom: 6 }}>
                 {labelSlots.map(t => (
-                  <div key={t} style={{ width: 60*PX_PER_MIN, fontSize: 12, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>{t}</div>
+                  <div key={t} style={{ width: 60*PX_PER_MIN, fontSize: 11, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>{t}</div>
                 ))}
               </div>
               <div style={{ position: "relative", height: 80, background: "rgba(0,0,0,0.25)", borderRadius: 14, border: `1px solid ${BORDER}` }}>
-                {slots.map(t => (
-                  <div key={t} style={{ position: "absolute", left: (hhmmToMin(t)-openMin)*PX_PER_MIN, top: 0, bottom: 0, width: 1, background: hhmmToMin(t)%60===0 ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)" }} />
+                {labelSlots.map(t => (
+                  <div key={t} style={{ position: "absolute", left: (hhmmToMin(t)-openMin)*PX_PER_MIN, top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.14)" }} />
                 ))}
                 {dayReservations.map(r => {
                   const menu = menuMap.get(r.menuId);
@@ -280,28 +307,35 @@ export default function ReceptionPage() {
                   const width = (hhmmToMin(r.end)-hhmmToMin(r.start))*PX_PER_MIN;
                   const isDone = r.status === "done";
                   const isCancelled = r.status === "cancelled";
-                  const mc = getMenuColor(r.menuId);
+                  const mc = getMenuColor(r.menuId, taskLabel);
                   const rgc = GENDER_COLORS[r.gender ?? "none"];
                   return (
                     <div key={r.id} onMouseDown={e => onMouseDown(e, r.id)}
-                      style={{ position: "absolute", left, top: 4, height: 72, width: Math.max(width,60), cursor: "grab", zIndex: 5, userSelect: "none", opacity: isCancelled ? 0.45 : 1 }}>
-                      <div style={{ height: "100%", borderRadius: 12, padding: "5px 10px",
+                      style={{ position: "absolute", left, top: 4, height: 72, width: Math.max(width, 40), cursor: "grab", zIndex: 5, userSelect: "none", opacity: isCancelled ? 0.45 : 1 }}>
+                      <div style={{ height: "100%", borderRadius: 12, padding: "5px 8px",
                         background: isCancelled ? "rgba(239,68,68,0.12)" : isDone ? "linear-gradient(135deg,rgba(34,197,94,0.22),rgba(34,197,94,0.08))" : mc.bg,
                         border: `1px solid ${isCancelled ? "rgba(239,68,68,0.4)" : isDone ? "rgba(34,197,94,0.5)" : mc.border}`,
                         overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "center", gap: 1 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <span style={{ fontSize: 9, fontWeight: 900, padding: "1px 5px", borderRadius: 4, background: isCancelled ? "rgba(239,68,68,0.6)" : isDone ? "rgba(34,197,94,0.5)" : mc.badge, color: "#fff", flexShrink: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ fontSize: 9, fontWeight: 900, padding: "1px 4px", borderRadius: 4, background: isCancelled ? "rgba(239,68,68,0.6)" : isDone ? "rgba(34,197,94,0.5)" : mc.badge, color: "#fff", flexShrink: 0 }}>
                             {isCancelled ? "取消" : isDone ? "済" : mc.label}
                           </span>
-                          <span style={{ fontSize: 11, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.start}–{r.end}</span>
+                          <span style={{ fontSize: 10, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.start}–{r.end}</span>
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          {(r.gender ?? "none") !== "none" && (
-                            <span style={{ fontSize: 9, fontWeight: 900, padding: "1px 4px", borderRadius: 4, background: rgc.badge, color: "#fff", flexShrink: 0 }}>{rgc.label}</span>
-                          )}
-                          <span style={{ fontSize: 12, fontWeight: 900, color: isCancelled ? "rgba(255,255,255,0.5)" : rgc.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: isCancelled ? "line-through" : "none" }}>{r.name || "（氏名なし）"}</span>
+                        {r.menuId !== "task" && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                            {(r.gender ?? "none") !== "none" && (
+                              <span style={{ fontSize: 9, fontWeight: 900, padding: "1px 3px", borderRadius: 4, background: rgc.badge, color: "#fff", flexShrink: 0 }}>{rgc.label}</span>
+                            )}
+                            <span style={{ fontSize: 11, fontWeight: 900, color: rgc.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+                          </div>
+                        )}
+                        {r.menuId === "task" && r.memo && (
+                          <div style={{ fontSize: 10, opacity: 0.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.memo}</div>
+                        )}
+                        <div style={{ fontSize: 9, opacity: 0.7, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {r.menuId === "task" ? (getPrice(r, menuMap) > 0 ? `¥${money(getPrice(r, menuMap))}` : "") : `${menu?.label} · ¥${money(getPrice(r, menuMap))}`}
                         </div>
-                        <div style={{ fontSize: 10, opacity: 0.75, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{menu?.label} · ¥{money(getPrice(r, menuMap))}</div>
                       </div>
                     </div>
                   );
@@ -360,30 +394,60 @@ export default function ReceptionPage() {
             <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 14 }}>予約入力</div>
             <div style={{ display: "grid", gap: 12 }}>
               <div>
-                <label style={labelSt()}>氏名 <span style={{ color: "rgba(255,100,100,0.8)", fontSize: 11 }}>※必須</span></label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {(["male","female","none"] as Gender[]).map(g => {
-                    const gc2 = GENDER_COLORS[g];
-                    const isActive = gender === g;
-                    return (
-                      <button key={g} onClick={() => setGender(g)} style={{
-                        flexShrink: 0, height: 44, padding: "0 14px", borderRadius: 12,
-                        border: isActive ? `2px solid ${gc2.badge}` : "1px solid rgba(255,255,255,0.12)",
-                        background: isActive ? `${gc2.badge}33` : "rgba(0,0,0,0.25)",
-                        color: isActive ? gc2.text : "rgba(255,255,255,0.55)",
-                        fontWeight: 900, fontSize: 13, cursor: "pointer",
-                      }}>{gc2.label}</button>
-                    );
-                  })}
-                  <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key==="Enter"&&addReservation()} placeholder="例：山田 太郎"
-                    style={{ ...inputSt(), color: gc.text, fontWeight: name ? 900 : undefined }} />
-                </div>
+                <label style={labelSt()}>メニュー</label>
+                <select value={menuId} onChange={e => handleMenuChange(e.target.value)} style={inputSt()}>
+                  {MENUS.map(m => <option key={m.id} value={m.id}>{m.label}{!m.isTask ? `　¥${money(m.price)}` : "　（売上手入力）"}</option>)}
+                </select>
               </div>
+
+              {/* 業務ラベル編集 */}
+              {isTask && (
+                <div>
+                  <label style={labelSt()}>業務名称 <span style={{ opacity: 0.55, fontSize: 11, fontWeight: 400 }}>（変更可）</span></label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {editingTaskLabel ? (
+                      <>
+                        <input value={taskLabel} onChange={e => setTaskLabel(e.target.value)} style={{ ...inputSt(), flex: 1 }} />
+                        <button onClick={() => setEditingTaskLabel(false)} style={{ ...miniBtn(), background: "rgba(88,166,255,0.2)" }}>確定</button>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ ...inputSt(), flex: 1, display: "flex", alignItems: "center", opacity: 0.9 }}>{taskLabel}</div>
+                        <button onClick={() => setEditingTaskLabel(true)} style={miniBtn()}>変更</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {!isTask && (
+                <div>
+                  <label style={labelSt()}>氏名 <span style={{ color: "rgba(255,100,100,0.8)", fontSize: 11 }}>※必須</span></label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {(["male","female","none"] as Gender[]).map(g => {
+                      const gc2 = GENDER_COLORS[g];
+                      const isActive = gender === g;
+                      return (
+                        <button key={g} onClick={() => setGender(g)} style={{
+                          flexShrink: 0, height: 44, padding: "0 14px", borderRadius: 12,
+                          border: isActive ? `2px solid ${gc2.badge}` : "1px solid rgba(255,255,255,0.12)",
+                          background: isActive ? `${gc2.badge}33` : "rgba(0,0,0,0.25)",
+                          color: isActive ? gc2.text : "rgba(255,255,255,0.55)",
+                          fontWeight: 900, fontSize: 13, cursor: "pointer",
+                        }}>{gc2.label}</button>
+                      );
+                    })}
+                    <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key==="Enter"&&addReservation()} placeholder="例：山田 太郎"
+                      style={{ ...inputSt(), color: gc.text, fontWeight: name ? 900 : undefined }} />
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
                   <label style={labelSt()}>開始時刻</label>
                   <select value={start} onChange={e => setStart(e.target.value)} style={inputSt()}>
-                    {slots.slice(0,-1).map(t => <option key={t} value={t}>{t}</option>)}
+                    {getSlots(isTask ? TASK_SNAP_MIN : SNAP_MIN).slice(0,-1).map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
                 <div>
@@ -391,31 +455,28 @@ export default function ReceptionPage() {
                   <input value={selectedDate} readOnly style={inputSt({ opacity: 0.75 })} />
                 </div>
               </div>
+
               <div>
-                <label style={labelSt()}>メニュー</label>
-                <select value={menuId} onChange={e => handleMenuChange(e.target.value)} style={inputSt()}>
-                  {MENUS.map(m => <option key={m.id} value={m.id}>{m.label}　¥{money(m.price)}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={labelSt()}>金額 <span style={{ opacity: 0.55, fontSize: 11, fontWeight: 400 }}>（自動入力・変更可）</span></label>
+                <label style={labelSt()}>金額 {isTask ? <span style={{ opacity: 0.55, fontSize: 11, fontWeight: 400 }}>（売上に計上する場合は入力）</span> : <span style={{ opacity: 0.55, fontSize: 11, fontWeight: 400 }}>（自動入力・変更可）</span>}</label>
                 <div style={{ position: "relative" }}>
                   <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", opacity: 0.7, fontSize: 14, pointerEvents: "none" }}>¥</span>
                   <input type="number" value={customPriceInput} onChange={e => setCustomPriceInput(e.target.value)}
-                    placeholder={String(MENUS.find(m => m.id === menuId)?.price ?? "")}
+                    placeholder={isTask ? "0" : String(MENUS.find(m => m.id === menuId)?.price ?? "")}
                     style={{ ...inputSt(), paddingLeft: 24 }} />
                 </div>
               </div>
+
               <div>
                 <label style={labelSt()}>メモ（任意）</label>
-                <textarea value={memo} onChange={e => setMemo(e.target.value)} placeholder="例：腰痛 / 自律神経 / 紹介…" style={inputSt({ minHeight: 72, resize: "vertical" })} />
+                <textarea value={memo} onChange={e => setMemo(e.target.value)} placeholder={isTask ? "例：セミナー準備・会計作業…" : "例：腰痛 / 自律神経 / 紹介…"} style={inputSt({ minHeight: 72, resize: "vertical" })} />
               </div>
-              <button onClick={addReservation} disabled={!name.trim()} style={{
-                height: 48, borderRadius: 14, border: "1px solid rgba(88,166,255,0.40)",
-                background: name.trim() ? "linear-gradient(135deg,rgba(88,166,255,0.75),rgba(88,166,255,0.40))" : "rgba(255,255,255,0.06)",
-                color: name.trim() ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.35)",
-                fontWeight: 900, fontSize: 15, cursor: name.trim() ? "pointer" : "not-allowed",
-              }}>＋ 予約を追加</button>
+
+              <button onClick={addReservation} disabled={!isTask && !name.trim()} style={{
+                height: 48, borderRadius: 14, border: `1px solid ${isTask ? "rgba(150,150,150,0.4)" : "rgba(88,166,255,0.40)"}`,
+                background: (isTask || name.trim()) ? isTask ? "linear-gradient(135deg,rgba(150,150,150,0.4),rgba(150,150,150,0.2))" : "linear-gradient(135deg,rgba(88,166,255,0.75),rgba(88,166,255,0.40))" : "rgba(255,255,255,0.06)",
+                color: (isTask || name.trim()) ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.35)",
+                fontWeight: 900, fontSize: 15, cursor: (isTask || name.trim()) ? "pointer" : "not-allowed",
+              }}>＋ {isTask ? taskLabel : "予約"}を追加</button>
             </div>
           </div>
 
@@ -430,10 +491,11 @@ export default function ReceptionPage() {
                   const menu = menuMap.get(r.menuId);
                   const isDone = r.status==="done";
                   const isCancelled = r.status==="cancelled";
-                  const mc = getMenuColor(r.menuId);
+                  const mc = getMenuColor(r.menuId, taskLabel);
                   const rgc = GENDER_COLORS[r.gender ?? "none"];
                   const price = getPrice(r, menuMap);
                   const isCustom = r.customPrice !== undefined && r.customPrice !== menu?.price;
+                  const isTaskItem = r.menuId === "task";
                   return (
                     <div key={r.id} onClick={() => toggleDone(r.id)} style={{
                       display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 12,
@@ -451,14 +513,17 @@ export default function ReceptionPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
                           <span style={{ fontSize: 9, fontWeight: 900, padding: "1px 5px", borderRadius: 4, background: isCancelled?"rgba(239,68,68,0.5)":isDone?"rgba(34,197,94,0.4)":mc.badge, color: "#fff", flexShrink: 0 }}>{isCancelled?"取消":isDone?"済":mc.label}</span>
-                          {(r.gender ?? "none") !== "none" && (
+                          {!isTaskItem && (r.gender ?? "none") !== "none" && (
                             <span style={{ fontSize: 9, fontWeight: 900, padding: "1px 4px", borderRadius: 4, background: rgc.badge, color: "#fff", flexShrink: 0 }}>{rgc.label}</span>
                           )}
-                          <span style={{ fontSize: 12, fontWeight: 900, color: isCancelled?"rgba(255,255,255,0.5)":rgc.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: isCancelled?"line-through":"none" }}>{r.start}–{r.end}　{r.name||"（氏名なし）"}</span>
+                          <span style={{ fontSize: 12, fontWeight: 900, color: isTaskItem?"rgba(255,255,255,0.7)":rgc.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: isCancelled?"line-through":"none" }}>
+                            {r.start}–{r.end}　{isTaskItem ? taskLabel : r.name}
+                          </span>
                         </div>
                         <div style={{ fontSize: 11, opacity: 0.65, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {menu?.label}　<span style={{ color: isCustom?"#fbbf24":undefined, fontWeight: isCustom?900:undefined }}>¥{money(price)}</span>
-                          {isCustom && <span style={{ fontSize: 10, marginLeft: 4, color: "#fbbf24" }}>変更</span>}
+                          {isTaskItem ? (r.memo || taskLabel) : menu?.label}
+                          {price > 0 && <span style={{ color: isCustom?"#fbbf24":undefined, fontWeight: isCustom?900:undefined }}>　¥{money(price)}</span>}
+                          {isCustom && !isTaskItem && <span style={{ fontSize: 10, marginLeft: 4, color: "#fbbf24" }}>変更</span>}
                         </div>
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 3, flexShrink: 0 }}>
@@ -472,8 +537,8 @@ export default function ReceptionPage() {
             )}
             {dayReservations.length>0 && (
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${BORDER}`, display: "flex", justifyContent: "space-between", fontSize: 12, opacity: 0.7 }}>
-                <span>本日合計 {dayReservations.filter(r=>r.status!=="cancelled").length}件</span>
-                <span>¥{money(dayReservations.filter(r=>r.status!=="cancelled").reduce((s,r) => s+getPrice(r,menuMap),0))}</span>
+                <span>本日 {dayReservations.filter(r=>r.status!=="cancelled"&&r.menuId!=="task").length}件</span>
+                <span>¥{money(dayReservations.filter(r=>r.status!=="cancelled"&&r.menuId!=="task").reduce((s,r)=>s+getPrice(r,menuMap),0))}</span>
               </div>
             )}
           </div>
