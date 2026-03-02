@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
 
 type ReservationStatus = "todo" | "done" | "cancelled";
 type Gender = "male" | "female" | "none";
@@ -15,6 +15,7 @@ type Menu = { id: string; label: string; minutes: number; price: number; isTask?
 
 const LS_KEY = "enmeidou_reception_v2";
 const TASK_LABEL_KEY = "enmeidou_task_label";
+const KARUTE_KEY = "enmeidou_karute_v1";
 const OPEN = "09:00";
 const CLOSE = "22:00";
 const SNAP_MIN = 30;
@@ -83,7 +84,6 @@ function getPrice(r: { menuId: string; customPrice?: number }, menuMap: Map<stri
   return r.customPrice !== undefined ? r.customPrice : (menuMap.get(r.menuId)?.price ?? 0);
 }
 
-// カスタムドロップダウンコンポーネント
 function CustomSelect({ value, onChange, options }: {
   value: string;
   onChange: (v: string) => void;
@@ -103,16 +103,12 @@ function CustomSelect({ value, onChange, options }: {
 
   return (
     <div ref={ref} style={{ position: "relative", width: "100%" }}>
-      <div
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: "100%", borderRadius: 12, border: `1px solid ${open ? "rgba(88,166,255,0.5)" : "rgba(255,255,255,0.12)"}`,
-          background: "rgba(0,0,0,0.28)", color: "rgba(255,255,255,0.92)",
-          padding: "11px 36px 11px 14px", fontSize: 15, cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          userSelect: "none",
-        }}
-      >
+      <div onClick={() => setOpen(o => !o)} style={{
+        width: "100%", borderRadius: 12, border: `1px solid ${open ? "rgba(88,166,255,0.5)" : "rgba(255,255,255,0.12)"}`,
+        background: "rgba(0,0,0,0.28)", color: "rgba(255,255,255,0.92)",
+        padding: "11px 36px 11px 14px", fontSize: 15, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "space-between", userSelect: "none",
+      }}>
         <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selected?.label ?? ""}</span>
         <span style={{ position: "absolute", right: 12, opacity: 0.6, fontSize: 12 }}>{open ? "▲" : "▼"}</span>
       </div>
@@ -124,9 +120,7 @@ function CustomSelect({ value, onChange, options }: {
           maxHeight: 260, overflowY: "auto",
         }}>
           {options.map(o => (
-            <div
-              key={o.value}
-              onClick={() => { onChange(o.value); setOpen(false); }}
+            <div key={o.value} onClick={() => { onChange(o.value); setOpen(false); }}
               style={{
                 padding: "11px 14px", fontSize: 14, cursor: "pointer",
                 background: o.value === value ? "rgba(88,166,255,0.18)" : "transparent",
@@ -135,12 +129,116 @@ function CustomSelect({ value, onChange, options }: {
               }}
               onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.07)")}
               onMouseLeave={e => (e.currentTarget.style.background = o.value === value ? "rgba(88,166,255,0.18)" : "transparent")}
+            >{o.label}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NameInput({ value, onChange, karuteNames, color }: {
+  value: string;
+  onChange: (v: string) => void;
+  karuteNames: { kanji: string; kana: string }[];
+  color: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [showAddToKarute, setShowAddToKarute] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    if (!value.trim()) return karuteNames;
+    return karuteNames.filter(k => k.kanji.includes(value) || k.kana.includes(value));
+  }, [value, karuteNames]);
+
+  const existsInKarute = karuteNames.some(k => k.kanji === value.trim());
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  useEffect(() => {
+    setShowAddToKarute(!!value.trim() && !existsInKarute);
+  }, [value, existsInKarute]);
+
+  function addToKarute() {
+    try {
+      const raw = localStorage.getItem(KARUTE_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      list.push({ id: uid(), kanji: value.trim(), kana: "", createdAt: Date.now() });
+      localStorage.setItem(KARUTE_KEY, JSON.stringify(list));
+      setShowAddToKarute(false);
+    } catch {}
+  }
+
+  return (
+    <div ref={ref} style={{ position: "relative", flex: 1 }}>
+      <input
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder="例：山田 太郎"
+        style={{ ...inputSt(), color, fontWeight: value ? 900 : undefined, width: "100%" }}
+      />
+      {open && filtered.length > 0 && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 9999,
+          background: "#0b1220", border: "1px solid rgba(88,166,255,0.3)", borderRadius: 12,
+          overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+          maxHeight: 200, overflowY: "auto",
+        }}>
+          {filtered.map(k => (
+            <div key={k.kanji} onClick={() => { onChange(k.kanji); setOpen(false); }}
+              style={{ padding: "10px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", justifyContent: "space-between" }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.07)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
             >
-              {o.label}
+              <span style={{ fontSize: 14, color: "rgba(255,255,255,0.9)" }}>{k.kanji}</span>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{k.kana}</span>
             </div>
           ))}
         </div>
       )}
+      {showAddToKarute && (
+        <button onClick={addToKarute} style={{
+          position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+          fontSize: 11, padding: "3px 8px", borderRadius: 6,
+          border: "1px solid rgba(34,197,94,0.4)", background: "rgba(34,197,94,0.15)",
+          color: "#22c55e", cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap",
+        }}>＋カルテ追加</button>
+      )}
+    </div>
+  );
+}
+
+function ContextMenu({ x, y, onDelete, onClose }: { x: number; y: number; onDelete: () => void; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [onClose]);
+
+  return (
+    <div ref={ref} style={{
+      position: "fixed", left: x, top: y, zIndex: 99999,
+      background: "#0b1220", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 10,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.7)", overflow: "hidden", minWidth: 140,
+    }}>
+      <div onClick={onDelete} style={{
+        padding: "10px 16px", cursor: "pointer", color: "#f87171", fontSize: 14, fontWeight: 700,
+        display: "flex", alignItems: "center", gap: 8,
+      }}
+        onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.12)")}
+        onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+      >🗑 削除</div>
     </div>
   );
 }
@@ -159,7 +257,10 @@ export default function ReceptionPage() {
   const [customPriceInput, setCustomPriceInput] = useState<string>(String(MENUS[0].price));
   const [taskLabel, setTaskLabel] = useState("業務");
   const [editingTaskLabel, setEditingTaskLabel] = useState(false);
+  const [karuteNames, setKaruteNames] = useState<{ kanji: string; kana: string }[]>([]);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const draggingRef = useRef<{ id: string; startX: number; origMin: number } | null>(null);
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
 
   const isTask = menuId === "task";
@@ -170,6 +271,13 @@ export default function ReceptionPage() {
       if (raw) { const p = JSON.parse(raw); if (Array.isArray(p)) setReservations(p); }
       const savedLabel = localStorage.getItem(TASK_LABEL_KEY);
       if (savedLabel) setTaskLabel(savedLabel);
+      const karuteRaw = localStorage.getItem(KARUTE_KEY);
+      if (karuteRaw) {
+        const list = JSON.parse(karuteRaw);
+        const names = list.map((k: any) => ({ kanji: k.kanji || "", kana: k.kana || "" }))
+          .sort((a: any, b: any) => a.kana.localeCompare(b.kana, "ja"));
+        setKaruteNames(names);
+      }
     } catch {}
   }, []);
 
@@ -277,6 +385,7 @@ export default function ReceptionPage() {
 
   function removeReservation(id: string) {
     setReservations(prev => prev.filter(r => r.id !== id));
+    setContextMenu(null);
   }
 
   const PX_PER_MIN = useMemo(() => {
@@ -285,7 +394,24 @@ export default function ReceptionPage() {
     return Math.max(1.0, (w / totalMin) * 0.92);
   }, []);
 
+  function onContextMenu(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, id });
+  }
+
+  function onTouchStart(e: React.TouchEvent, id: string) {
+    longPressRef.current = setTimeout(() => {
+      const touch = e.touches[0];
+      setContextMenu({ x: touch.clientX, y: touch.clientY, id });
+    }, 600);
+  }
+  function onTouchEnd() {
+    if (longPressRef.current) clearTimeout(longPressRef.current);
+  }
+
   function onMouseDown(e: React.MouseEvent, id: string) {
+    if (e.button === 2) return;
     e.preventDefault();
     const r = reservations.find(x => x.id === id);
     if (!r) return;
@@ -318,18 +444,22 @@ export default function ReceptionPage() {
   const timelineWidth = totalMin * PX_PER_MIN;
   const gc = GENDER_COLORS[gender];
 
-  // メニュー選択肢
   const menuOptions = MENUS.map(m => ({
     value: m.id,
     label: m.isTask ? `${m.label}　（売上手入力）` : `${m.label}　¥${money(m.price)}`,
   }));
-
-  // 開始時刻選択肢
   const startOptions = getSlots(isTask ? TASK_SNAP_MIN : SNAP_MIN).slice(0, -1).map(t => ({ value: t, label: t }));
 
   return (
-    <div style={{ minHeight: "100vh", background: "#060910", color: "rgba(255,255,255,0.92)", fontFamily: "'Hiragino Sans','Yu Gothic UI',sans-serif", padding: "16px" }}>
+    <div style={{ minHeight: "100vh", background: "#060910", color: "rgba(255,255,255,0.92)", fontFamily: "'Hiragino Sans','Yu Gothic UI',sans-serif", padding: "16px" }}
+      onClick={() => setContextMenu(null)}>
       <style>{`* { box-sizing: border-box; } ::-webkit-scrollbar{height:6px;width:6px} ::-webkit-scrollbar-track{background:rgba(255,255,255,0.04);border-radius:3px} ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15);border-radius:3px} input::placeholder,textarea::placeholder{color:rgba(255,255,255,0.35)} input[type=number]::-webkit-inner-spin-button{opacity:0.4}`}</style>
+
+      {contextMenu && (
+        <ContextMenu x={contextMenu.x} y={contextMenu.y}
+          onDelete={() => removeReservation(contextMenu.id)}
+          onClose={() => setContextMenu(null)} />
+      )}
 
       <div style={{ maxWidth: 1600, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
 
@@ -339,6 +469,7 @@ export default function ReceptionPage() {
           <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 1 }}>PEAK MANAGER</div>
           <div style={{ opacity: 0.5, fontSize: 14 }}>/ 円命堂 予約管理</div>
           <a href="/stats" style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.7)", textDecoration: "none", fontWeight: 700 }}>📊 経営指標</a>
+          <a href="/karute" style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.7)", textDecoration: "none", fontWeight: 700 }}>📋 クライアントカルテ</a>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
               <span style={{ opacity: 0.55 }}>見込み</span>
@@ -359,7 +490,7 @@ export default function ReceptionPage() {
         {/* タイムライン */}
         <div style={card()}>
           <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 10 }}>
-            📅 タイムライン <span style={{ opacity: 0.5, fontWeight: 400, fontSize: 13 }}>ドラッグで時刻変更（施術30分・業務15分刻み）</span>
+            📅 タイムライン <span style={{ opacity: 0.5, fontWeight: 400, fontSize: 13 }}>ドラッグで時刻変更（右クリック／長押しで削除）</span>
           </div>
           <div ref={timelineRef} style={{ overflowX: "auto", paddingBottom: 4 }}>
             <div style={{ width: timelineWidth, minWidth: "100%" }}>
@@ -381,7 +512,12 @@ export default function ReceptionPage() {
                   const mc = getMenuColor(r.menuId, taskLabel);
                   const rgc = GENDER_COLORS[r.gender ?? "none"];
                   return (
-                    <div key={r.id} onMouseDown={e => onMouseDown(e, r.id)}
+                    <div key={r.id}
+                      onMouseDown={e => onMouseDown(e, r.id)}
+                      onContextMenu={e => onContextMenu(e, r.id)}
+                      onTouchStart={e => onTouchStart(e, r.id)}
+                      onTouchEnd={onTouchEnd}
+                      onTouchMove={onTouchEnd}
                       style={{ position: "absolute", left, top: 4, height: 80, width: Math.max(width, 44), cursor: "grab", zIndex: 5, userSelect: "none", opacity: isCancelled ? 0.45 : 1 }}>
                       <div style={{ height: "100%", borderRadius: 12, padding: "6px 10px",
                         background: isCancelled ? "rgba(239,68,68,0.12)" : isDone ? "linear-gradient(135deg,rgba(34,197,94,0.22),rgba(34,197,94,0.08))" : mc.bg,
@@ -462,7 +598,16 @@ export default function ReceptionPage() {
 
           {/* 予約入力 */}
           <div style={card()}>
-            <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 16 }}>予約入力</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>予約入力</div>
+              <button onClick={addReservation} disabled={!isTask && !name.trim()} style={{
+                height: 36, padding: "0 16px", borderRadius: 10,
+                border: `1px solid ${isTask ? "rgba(150,150,150,0.4)" : "rgba(88,166,255,0.40)"}`,
+                background: (isTask || name.trim()) ? isTask ? "linear-gradient(135deg,rgba(150,150,150,0.4),rgba(150,150,150,0.2))" : "linear-gradient(135deg,rgba(88,166,255,0.75),rgba(88,166,255,0.40))" : "rgba(255,255,255,0.06)",
+                color: (isTask || name.trim()) ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.35)",
+                fontWeight: 900, fontSize: 13, cursor: (isTask || name.trim()) ? "pointer" : "not-allowed", whiteSpace: "nowrap",
+              }}>＋ {isTask ? taskLabel : "予約"}を追加</button>
+            </div>
             <div style={{ display: "grid", gap: 14 }}>
               <div>
                 <label style={labelSt()}>メニュー</label>
@@ -503,8 +648,7 @@ export default function ReceptionPage() {
                         }}>{gc2.label}</button>
                       );
                     })}
-                    <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key==="Enter"&&addReservation()} placeholder="例：山田 太郎"
-                      style={{ ...inputSt(), color: gc.text, fontWeight: name ? 900 : undefined }} />
+                    <NameInput value={name} onChange={setName} karuteNames={karuteNames} color={gc.text} />
                   </div>
                 </div>
               )}
@@ -534,13 +678,6 @@ export default function ReceptionPage() {
                 <label style={labelSt()}>メモ（任意）</label>
                 <textarea value={memo} onChange={e => setMemo(e.target.value)} placeholder={isTask ? "例：セミナー準備・会計作業…" : "例：腰痛 / 自律神経 / 紹介…"} style={inputSt({ minHeight: 80, resize: "vertical" })} />
               </div>
-
-              <button onClick={addReservation} disabled={!isTask && !name.trim()} style={{
-                height: 52, borderRadius: 14, border: `1px solid ${isTask ? "rgba(150,150,150,0.4)" : "rgba(88,166,255,0.40)"}`,
-                background: (isTask || name.trim()) ? isTask ? "linear-gradient(135deg,rgba(150,150,150,0.4),rgba(150,150,150,0.2))" : "linear-gradient(135deg,rgba(88,166,255,0.75),rgba(88,166,255,0.40))" : "rgba(255,255,255,0.06)",
-                color: (isTask || name.trim()) ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.35)",
-                fontWeight: 900, fontSize: 16, cursor: (isTask || name.trim()) ? "pointer" : "not-allowed",
-              }}>＋ {isTask ? taskLabel : "予約"}を追加</button>
             </div>
           </div>
 
