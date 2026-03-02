@@ -83,6 +83,68 @@ function getPrice(r: { menuId: string; customPrice?: number }, menuMap: Map<stri
   return r.customPrice !== undefined ? r.customPrice : (menuMap.get(r.menuId)?.price ?? 0);
 }
 
+// カスタムドロップダウンコンポーネント
+function CustomSelect({ value, onChange, options }: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find(o => o.value === value);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: "relative", width: "100%" }}>
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: "100%", borderRadius: 12, border: `1px solid ${open ? "rgba(88,166,255,0.5)" : "rgba(255,255,255,0.12)"}`,
+          background: "rgba(0,0,0,0.28)", color: "rgba(255,255,255,0.92)",
+          padding: "11px 36px 11px 14px", fontSize: 15, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          userSelect: "none",
+        }}
+      >
+        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selected?.label ?? ""}</span>
+        <span style={{ position: "absolute", right: 12, opacity: 0.6, fontSize: 12 }}>{open ? "▲" : "▼"}</span>
+      </div>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 9999,
+          background: "#0b1220", border: "1px solid rgba(88,166,255,0.3)", borderRadius: 12,
+          overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+          maxHeight: 260, overflowY: "auto",
+        }}>
+          {options.map(o => (
+            <div
+              key={o.value}
+              onClick={() => { onChange(o.value); setOpen(false); }}
+              style={{
+                padding: "11px 14px", fontSize: 14, cursor: "pointer",
+                background: o.value === value ? "rgba(88,166,255,0.18)" : "transparent",
+                color: o.value === value ? "#58a6ff" : "rgba(255,255,255,0.85)",
+                borderBottom: "1px solid rgba(255,255,255,0.05)",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.07)")}
+              onMouseLeave={e => (e.currentTarget.style.background = o.value === value ? "rgba(88,166,255,0.18)" : "transparent")}
+            >
+              {o.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ReceptionPage() {
   const [selectedDate, setSelectedDate] = useState(() => ymdOf(new Date()));
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -220,7 +282,7 @@ export default function ReceptionPage() {
   const PX_PER_MIN = useMemo(() => {
     if (typeof window === "undefined") return 2.0;
     const w = window.innerWidth - 120;
-return Math.max(1.0, (w / totalMin) * 0.92);
+    return Math.max(1.0, (w / totalMin) * 0.92);
   }, []);
 
   function onMouseDown(e: React.MouseEvent, id: string) {
@@ -256,9 +318,18 @@ return Math.max(1.0, (w / totalMin) * 0.92);
   const timelineWidth = totalMin * PX_PER_MIN;
   const gc = GENDER_COLORS[gender];
 
+  // メニュー選択肢
+  const menuOptions = MENUS.map(m => ({
+    value: m.id,
+    label: m.isTask ? `${m.label}　（売上手入力）` : `${m.label}　¥${money(m.price)}`,
+  }));
+
+  // 開始時刻選択肢
+  const startOptions = getSlots(isTask ? TASK_SNAP_MIN : SNAP_MIN).slice(0, -1).map(t => ({ value: t, label: t }));
+
   return (
     <div style={{ minHeight: "100vh", background: "#060910", color: "rgba(255,255,255,0.92)", fontFamily: "'Hiragino Sans','Yu Gothic UI',sans-serif", padding: "16px" }}>
-      <style>{`* { box-sizing: border-box; } select,option { background:#0b1220!important; color:rgba(255,255,255,0.92)!important; } ::-webkit-scrollbar{height:6px;width:6px} ::-webkit-scrollbar-track{background:rgba(255,255,255,0.04);border-radius:3px} ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15);border-radius:3px} input::placeholder,textarea::placeholder{color:rgba(255,255,255,0.35)} input[type=number]::-webkit-inner-spin-button{opacity:0.4}`}</style>
+      <style>{`* { box-sizing: border-box; } ::-webkit-scrollbar{height:6px;width:6px} ::-webkit-scrollbar-track{background:rgba(255,255,255,0.04);border-radius:3px} ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15);border-radius:3px} input::placeholder,textarea::placeholder{color:rgba(255,255,255,0.35)} input[type=number]::-webkit-inner-spin-button{opacity:0.4}`}</style>
 
       <div style={{ maxWidth: 1600, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
 
@@ -395,9 +466,7 @@ return Math.max(1.0, (w / totalMin) * 0.92);
             <div style={{ display: "grid", gap: 14 }}>
               <div>
                 <label style={labelSt()}>メニュー</label>
-                <select value={menuId} onChange={e => handleMenuChange(e.target.value)} style={inputSt()}>
-                  {MENUS.map(m => <option key={m.id} value={m.id}>{m.label}{!m.isTask ? `　¥${money(m.price)}` : "　（売上手入力）"}</option>)}
-                </select>
+                <CustomSelect value={menuId} onChange={handleMenuChange} options={menuOptions} />
               </div>
 
               {isTask ? (
@@ -443,9 +512,7 @@ return Math.max(1.0, (w / totalMin) * 0.92);
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div>
                   <label style={labelSt()}>開始時刻</label>
-                  <select value={start} onChange={e => setStart(e.target.value)} style={inputSt()}>
-                    {getSlots(isTask ? TASK_SNAP_MIN : SNAP_MIN).slice(0,-1).map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
+                  <CustomSelect value={start} onChange={setStart} options={startOptions} />
                 </div>
                 <div>
                   <label style={labelSt()}>対象日</label>
