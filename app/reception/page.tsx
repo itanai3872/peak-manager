@@ -219,8 +219,8 @@ export default function ReceptionPage() {
 
   const PX_PER_MIN = useMemo(() => {
     if (typeof window === "undefined") return 2.0;
-    const w = window.innerWidth - 80;
-    return Math.max(1.2, w / totalMin);
+    const w = window.innerWidth - 120;
+return Math.max(1.0, (w / totalMin) * 0.92);
   }, []);
 
   function onMouseDown(e: React.MouseEvent, id: string) {
