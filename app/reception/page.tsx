@@ -257,7 +257,7 @@ return Math.max(1.0, (w / totalMin) * 0.92);
   const gc = GENDER_COLORS[gender];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#060910", color: "rgba(255,255,255,0.92)", fontFamily: "'Hiragino Sans','Yu Gothic UI',sans-serif", padding: "24px 32px" }}>
+    <div style={{ minHeight: "100vh", background: "#060910", color: "rgba(255,255,255,0.92)", fontFamily: "'Hiragino Sans','Yu Gothic UI',sans-serif", padding: "16px" }}>
       <style>{`* { box-sizing: border-box; } select,option { background:#0b1220!important; color:rgba(255,255,255,0.92)!important; } ::-webkit-scrollbar{height:6px;width:6px} ::-webkit-scrollbar-track{background:rgba(255,255,255,0.04);border-radius:3px} ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15);border-radius:3px} input::placeholder,textarea::placeholder{color:rgba(255,255,255,0.35)} input[type=number]::-webkit-inner-spin-button{opacity:0.4}`}</style>
 
       <div style={{ maxWidth: 1600, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
