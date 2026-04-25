@@ -13,7 +13,8 @@ const SHEET_ID = "17xTuYtuaUdATKvqWPP8Qd7ucHhyfwCh9jpinprAgSp4";
 const OPEN = "09:00";
 const CLOSE = "22:00";
 const SNAP_MIN = 30;
-const TASK_SNAP_MIN = 15;
+const TASK_SNAP_MIN = 30;
+const TASK_DURATIONS = [30, 60, 90, 120, 160];
 
 type ReservationStatus = "todo" | "done" | "cancelled";
 type Gender = "male" | "female" | "none";
@@ -227,8 +228,10 @@ export default function ReceptionPage() {
   const [customPriceInput, setCustomPriceInput] = useState<string>(String(MENUS[0].price));
   const [taskLabel, setTaskLabel] = useState("業務");
   const [editingTaskLabel, setEditingTaskLabel] = useState(false);
+  const [taskDuration, setTaskDuration] = useState(60);
   const [karuteNames, setKaruteNames] = useState<{ kanji: string; kana: string }[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [calContextMenu, setCalContextMenu] = useState<{ x: number; y: number; ymd: string } | null>(null);
   const [doubleBookWarn, setDoubleBookWarn] = useState<string | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draggingRef = useRef<{ id: string; startX: number; origMin: number } | null>(null);
@@ -375,8 +378,9 @@ export default function ReceptionPage() {
   function addReservation() {
     if (!isTask && !name.trim()) return;
     const menu = menuMap.get(menuId) ?? MENUS[0];
-    const snap = isTask ? TASK_SNAP_MIN : SNAP_MIN;
-    const endMin = clamp(hhmmToMin(start) + menu.minutes, openMin + snap, closeMin);
+    const snap = SNAP_MIN;
+    const duration = isTask ? taskDuration : menu.minutes;
+    const endMin = clamp(hhmmToMin(start) + duration, openMin + snap, closeMin);
     const endStr = minToHHMM(endMin);
     const conflict = checkDoubleBooking(start, endStr);
     if (conflict) {
@@ -443,10 +447,21 @@ export default function ReceptionPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: "'Hiragino Sans','Yu Gothic UI',sans-serif", padding: "16px" }}
-      onClick={() => setContextMenu(null)}>
+      onClick={() => { setContextMenu(null); setCalContextMenu(null); }}>
       <style>{`* { box-sizing: border-box; } ::-webkit-scrollbar{height:6px;width:6px} ::-webkit-scrollbar-track{background:rgba(0,0,0,0.04);border-radius:3px} ::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.18);border-radius:3px} input::placeholder,textarea::placeholder{color:rgba(0,0,0,0.3)}`}</style>
 
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={() => removeReservation(contextMenu.id)} onClose={() => setContextMenu(null)} />}
+      {calContextMenu && (
+        <div style={{ position: "fixed", left: calContextMenu.x, top: calContextMenu.y, zIndex: 99999, background: "#fff", border: "1px solid #fca5a5", borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.15)", overflow: "hidden", minWidth: 160 }}
+          onClick={e => e.stopPropagation()}>
+          <div style={{ padding: "8px 14px", fontSize: 12, color: TEXT_SUB, borderBottom: `1px solid ${BORDER}`, fontWeight: 700 }}>{calContextMenu.ymd}</div>
+          <div onClick={() => { toggleHoliday(calContextMenu.ymd); setCalContextMenu(null); }}
+            style={{ padding: "10px 16px", cursor: "pointer", fontSize: 14, fontWeight: 700, color: holidays.includes(calContextMenu.ymd) ? "#16a34a" : "#dc2626", display: "flex", alignItems: "center", gap: 8 }}
+            onMouseEnter={e => (e.currentTarget.style.background = "#f5f5f5")}
+            onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+          >{holidays.includes(calContextMenu.ymd) ? "✓ 休日を解除" : "🚫 休日にする"}</div>
+        </div>
+      )}
       {doubleBookWarn && <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", zIndex: 99999, background: "#dc2626", color: "#fff", padding: "12px 24px", borderRadius: 12, fontWeight: 900, fontSize: 15 }}>{doubleBookWarn}</div>}
 
       <div style={{ maxWidth: 1600, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
@@ -548,6 +563,7 @@ export default function ReceptionPage() {
               <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#fee2e2", border: "1px solid #fca5a5", marginRight: 4 }} />休日</span>
               <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#dbeafe", border: "1px solid #3b82f6", marginRight: 4 }} />選択中</span>
               <span><span style={{ color: "#16a34a", fontWeight: 900, marginRight: 4 }}>●</span>予約あり</span>
+              <span style={{ color: "#dc2626" }}>💡 ダブルクリックで休日設定</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 5, marginBottom: 8 }}>
               {["日","月","火","水","木","金","土"].map((w,i) => <div key={w} style={{ textAlign: "center", fontSize: 12, color: i===0?"#ef4444":i===6?"#3b82f6":TEXT_SUB }}>{w}</div>)}
@@ -558,7 +574,10 @@ export default function ReceptionPage() {
                 const isSelected = ymd===selectedDate, isToday = ymd===todayYMD, isHol = holidays.includes(ymd);
                 const count = countsByDay.get(ymd)??0, dow = cell.date.getDay();
                 return (
-                  <button key={`${ymd}_${i}`} onClick={() => setSelectedDate(ymd)} style={{ height: 58, borderRadius: 12, position: "relative", border: isSelected?"2px solid #2563eb":isHol?"1.5px solid #fca5a5":`1px solid ${BORDER}`, background: isHol?"#fee2e2":isSelected?"#dbeafe":isToday?"#f0fdf4":CARD_BG, color: !cell.inMonth?"rgba(0,0,0,0.2)":dow===0?"#ef4444":dow===6?"#2563eb":TEXT, cursor: "pointer", overflow: "hidden" }}>
+                  <button key={`${ymd}_${i}`}
+                    onClick={() => setSelectedDate(ymd)}
+                    onDoubleClick={e => { e.preventDefault(); toggleHoliday(ymd); }}
+                    style={{ height: 58, borderRadius: 12, position: "relative", border: isSelected?"2px solid #2563eb":isHol?"1.5px solid #fca5a5":`1px solid ${BORDER}`, background: isHol?"#fee2e2":isSelected?"#dbeafe":isToday?"#f0fdf4":CARD_BG, color: !cell.inMonth?"rgba(0,0,0,0.2)":dow===0?"#ef4444":dow===6?"#2563eb":TEXT, cursor: "pointer", overflow: "hidden" }}>
                     <div style={{ fontSize: 16, fontWeight: 900, lineHeight: 1 }}>{cell.date.getDate()}</div>
                     {isHol && <div style={{ fontSize: 9, color: "#dc2626", fontWeight: 900 }}>休</div>}
                     {count>0 && <div style={{ position: "absolute", right: 5, bottom: 5, fontSize: 12, fontWeight: 900, color: "#16a34a" }}>{count}</div>}
@@ -575,8 +594,8 @@ export default function ReceptionPage() {
             </div>
             {(() => {
               const menu = menuMap.get(menuId); if (!menu) return null;
-              const snap = isTask?TASK_SNAP_MIN:SNAP_MIN;
-              const endMin = clamp(hhmmToMin(start)+menu.minutes, openMin+snap, closeMin);
+              const duration = isTask ? taskDuration : menu.minutes;
+              const endMin = clamp(hhmmToMin(start)+duration, openMin+SNAP_MIN, closeMin);
               const conflict = checkDoubleBooking(start, minToHHMM(endMin));
               if (!conflict) return null;
               return <div style={{ marginBottom: 12, padding: "8px 14px", borderRadius: 10, background: "#fef3c7", border: "1.5px solid #f59e0b", color: "#92400e", fontWeight: 700, fontSize: 13 }}>⚠️ この時間帯は「{conflict}」と重複します</div>;
@@ -584,10 +603,20 @@ export default function ReceptionPage() {
             <div style={{ display: "grid", gap: 14 }}>
               <div><label style={labelSt()}>メニュー</label><CustomSelect value={menuId} onChange={handleMenuChange} options={menuOptions} /></div>
               {isTask ? (
-                <div>
-                  <label style={labelSt()}>業務名称</label>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {editingTaskLabel ? (<><input value={taskLabel} onChange={e => setTaskLabel(e.target.value)} style={{ ...inputSt(), flex: 1 }} /><button onClick={() => setEditingTaskLabel(false)} style={miniBtn(true)}>確定</button></>) : (<><div style={{ ...inputSt(), flex: 1, display: "flex", alignItems: "center" }}>{taskLabel}</div><button onClick={() => setEditingTaskLabel(true)} style={miniBtn()}>変更</button></>)}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div>
+                    <label style={labelSt()}>業務名称</label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {editingTaskLabel ? (<><input value={taskLabel} onChange={e => setTaskLabel(e.target.value)} style={{ ...inputSt(), flex: 1 }} /><button onClick={() => setEditingTaskLabel(false)} style={miniBtn(true)}>確定</button></>) : (<><div style={{ ...inputSt(), flex: 1, display: "flex", alignItems: "center" }}>{taskLabel}</div><button onClick={() => setEditingTaskLabel(true)} style={miniBtn()}>変更</button></>)}
+                    </div>
+                  </div>
+                  <div>
+                    <label style={labelSt()}>時間</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {TASK_DURATIONS.map(d => (
+                        <button key={d} onClick={() => setTaskDuration(d)} style={{ flex: 1, height: 36, borderRadius: 10, border: taskDuration===d ? "1.5px solid #2563eb" : `1px solid ${BORDER}`, background: taskDuration===d ? "#dbeafe" : "#f9fafb", color: taskDuration===d ? "#1d4ed8" : TEXT, cursor: "pointer", fontWeight: 800, fontSize: 13 }}>{d}分</button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               ) : (
