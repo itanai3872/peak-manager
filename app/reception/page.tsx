@@ -1,12 +1,19 @@
 "use client";
 
 import React, { useEffect, useMemo, useState, useRef } from "react";
-import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+const LS_KEY = "enmeidou_reception_v2";
+const TASK_LABEL_KEY = "enmeidou_task_label";
+const KARUTE_KEY = "enmeidou_karute_v1";
+const HOLIDAY_KEY = "enmeidou_holidays_v1";
+
+const GAS_URL = "https://script.google.com/macros/s/AKfycbwuywlJv48PAfmEsGc-RcEsSFdYFmW7hbaQD0w8AO7TGRZja--y1qMLA-VFvYLNJMYL/exec";
+const SHEET_ID = "17xTuYtuaUdATKvqWPP8Qd7ucHhyfwCh9jpinprAgSp4";
+
+const OPEN = "09:00";
+const CLOSE = "22:00";
+const SNAP_MIN = 30;
+const TASK_SNAP_MIN = 15;
 
 type ReservationStatus = "todo" | "done" | "cancelled";
 type Gender = "male" | "female" | "none";
@@ -14,29 +21,19 @@ type Reservation = {
   id: string; date: string; start: string; end: string;
   name: string; menuId: string; memo: string;
   status: ReservationStatus; customPrice?: number;
-  gender?: Gender; createdAt: number;
-  customLabel?: string;
+  gender?: Gender; createdAt: number; customLabel?: string;
 };
 type Menu = { id: string; label: string; minutes: number; price: number; isTask?: boolean; };
 
-const LS_KEY        = "enmeidou_reception_v2";
-const TASK_LABEL_KEY = "enmeidou_task_label";
-const KARUTE_KEY    = "enmeidou_karute_v1";
-const HOLIDAY_KEY   = "enmeidou_holidays_v1";
-const OPEN  = "09:00";
-const CLOSE = "22:00";
-const SNAP_MIN      = 30;
-const TASK_SNAP_MIN = 15;
-
 const MENUS: Menu[] = [
-  { id: "jp_new_120",   label: "国内新規（120分）",              minutes: 120, price: 9000 },
-  { id: "jp_r_45",     label: "国内R（45分）",                  minutes: 45,  price: 6800 },
-  { id: "jp_maint_30", label: "国内メンテ（30分）",              minutes: 30,  price: 5500 },
+  { id: "jp_new_120", label: "国内新規（120分）", minutes: 120, price: 9000 },
+  { id: "jp_r_45", label: "国内R（45分）", minutes: 45, price: 6800 },
+  { id: "jp_maint_30", label: "国内メンテ（30分）", minutes: 30, price: 5500 },
   { id: "int_new_120", label: "インターナショナル新規（120分）", minutes: 120, price: 18000 },
-  { id: "int_r_60",    label: "インターナショナルR（60分）",     minutes: 60,  price: 12000 },
-  { id: "stu_new_60",  label: "学生新規（高校生迄）（60分）",    minutes: 60,  price: 6600 },
-  { id: "stu_r_45",    label: "学生R（高校生迄）（45分）",       minutes: 45,  price: 4400 },
-  { id: "task",        label: "業務",                            minutes: 15,  price: 0, isTask: true },
+  { id: "int_r_60", label: "インターナショナルR（60分）", minutes: 60, price: 12000 },
+  { id: "stu_new_60", label: "学生新規（高校生迄）（60分）", minutes: 60, price: 6600 },
+  { id: "stu_r_45", label: "学生R（高校生迄）（45分）", minutes: 45, price: 4400 },
+  { id: "task", label: "業務", minutes: 15, price: 0, isTask: true },
 ];
 
 function pad2(n: number) { return String(n).padStart(2, "0"); }
@@ -48,7 +45,7 @@ function monthKey(ymd: string) { return ymd.slice(0, 7); }
 function money(n: number) { return n.toLocaleString("ja-JP"); }
 function uid() { return `${Date.now()}_${Math.random().toString(16).slice(2)}`; }
 
-const openMin  = hhmmToMin(OPEN);
+const openMin = hhmmToMin(OPEN);
 const closeMin = hhmmToMin(CLOSE);
 const totalMin = closeMin - openMin;
 
@@ -66,47 +63,12 @@ function getPrice(r: { menuId: string; customPrice?: number }, menuMap: Map<stri
   return r.customPrice !== undefined ? r.customPrice : (menuMap.get(r.menuId)?.price ?? 0);
 }
 
-// Supabase row → Reservation
-function rowToRes(row: any): Reservation {
-  return {
-    id: row.id,
-    date: row.date,
-    start: row.start_time,
-    end: row.end_time,
-    name: row.name,
-    menuId: row.menu_id,
-    memo: row.memo ?? "",
-    status: row.status,
-    customPrice: row.custom_price ?? undefined,
-    gender: row.gender ?? "none",
-    createdAt: row.created_at,
-    customLabel: row.custom_label ?? undefined,
-  };
-}
-// Reservation → Supabase row
-function resToRow(r: Reservation) {
-  return {
-    id: r.id,
-    date: r.date,
-    start_time: r.start,
-    end_time: r.end,
-    name: r.name,
-    menu_id: r.menuId,
-    memo: r.memo,
-    status: r.status,
-    custom_price: r.customPrice ?? null,
-    gender: r.gender ?? "none",
-    created_at: r.createdAt,
-    custom_label: r.customLabel ?? null,
-  };
-}
-
-const BG       = "#f5f0e8";
-const CARD_BG  = "#ffffff";
+const BG = "#f5f0e8";
+const CARD_BG = "#ffffff";
 const CARD_BOR = "rgba(0,0,0,0.08)";
-const TEXT      = "#1a1a1a";
-const TEXT_SUB  = "rgba(0,0,0,0.45)";
-const BORDER    = "rgba(0,0,0,0.10)";
+const TEXT = "#1a1a1a";
+const TEXT_SUB = "rgba(0,0,0,0.45)";
+const BORDER = "rgba(0,0,0,0.10)";
 
 const MENU_COLORS = {
   jp:   { bg: "linear-gradient(135deg,#dbeafe,#eff6ff)", border: "#3b82f6", badge: "#2563eb", badgeTxt: "#fff", label: "国内" },
@@ -114,12 +76,12 @@ const MENU_COLORS = {
   stu:  { bg: "linear-gradient(135deg,#ede9fe,#f5f3ff)", border: "#8b5cf6", badge: "#7c3aed", badgeTxt: "#fff", label: "学生" },
   task: { bg: "linear-gradient(135deg,#f3f4f6,#f9fafb)", border: "#9ca3af", badge: "#6b7280", badgeTxt: "#fff", label: "業務" },
 };
-const DONE_COLORS   = { bg: "linear-gradient(135deg,#dcfce7,#f0fdf4)", border: "#22c55e", badge: "#16a34a", badgeTxt: "#fff" };
+const DONE_COLORS = { bg: "linear-gradient(135deg,#dcfce7,#f0fdf4)", border: "#22c55e", badge: "#16a34a", badgeTxt: "#fff" };
 const CANCEL_COLORS = { bg: "linear-gradient(135deg,#fee2e2,#fff1f2)", border: "#ef4444", badge: "#dc2626", badgeTxt: "#fff" };
 const GENDER_COLORS = {
   male:   { text: "#1d4ed8", badge: "#2563eb", label: "男" },
   female: { text: "#be185d", badge: "#db2777", label: "女" },
-  none:   { text: TEXT,      badge: "#9ca3af", label: "－" },
+  none:   { text: TEXT, badge: "#9ca3af", label: "－" },
 };
 
 function getMenuColor(menuId: string, taskLabel?: string) {
@@ -128,6 +90,7 @@ function getMenuColor(menuId: string, taskLabel?: string) {
   if (menuId.startsWith("stu")) return MENU_COLORS.stu;
   return MENU_COLORS.jp;
 }
+
 function card(extra?: React.CSSProperties): React.CSSProperties {
   return { borderRadius: 16, padding: 20, background: CARD_BG, border: `1px solid ${CARD_BOR}`, boxShadow: "0 2px 12px rgba(0,0,0,0.07)", ...extra };
 }
@@ -139,6 +102,27 @@ function labelSt(): React.CSSProperties {
 }
 function inputSt(extra?: React.CSSProperties): React.CSSProperties {
   return { width: "100%", borderRadius: 12, border: `1px solid ${BORDER}`, background: "#fafafa", color: TEXT, padding: "11px 14px", outline: "none", fontSize: 15, ...extra };
+}
+
+async function syncToSheet(reservations: Reservation[]) {
+  try {
+    await fetch(GAS_URL, {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify({ sheetId: SHEET_ID, reservations }),
+    });
+  } catch {}
+}
+
+async function loadFromSheet(): Promise<Reservation[] | null> {
+  try {
+    const res = await fetch(`${GAS_URL}?sheetId=${SHEET_ID}`);
+    const data = await res.json();
+    if (data.ok && Array.isArray(data.reservations) && data.reservations.length > 0) {
+      return data.reservations;
+    }
+  } catch {}
+  return null;
 }
 
 function CustomSelect({ value, onChange, options }: {
@@ -160,7 +144,7 @@ function CustomSelect({ value, onChange, options }: {
         <span style={{ position: "absolute", right: 12, opacity: 0.4, fontSize: 12 }}>{open ? "▲" : "▼"}</span>
       </div>
       {open && (
-        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 9999, background: "#fff", border: `1px solid #2563eb44`, borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", maxHeight: 260, overflowY: "auto" }}>
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 9999, background: "#fff", border: "1px solid #2563eb44", borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", maxHeight: 260, overflowY: "auto" }}>
           {options.map(o => (
             <div key={o.value} onClick={() => { onChange(o.value); setOpen(false); }}
               style={{ padding: "11px 14px", fontSize: 14, cursor: "pointer", background: o.value === value ? "#dbeafe" : "transparent", color: o.value === value ? "#1d4ed8" : TEXT, borderBottom: `1px solid ${BORDER}` }}
@@ -179,34 +163,22 @@ function NameInput({ value, onChange, karuteNames, color }: {
   karuteNames: { kanji: string; kana: string }[]; color: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const filtered = useMemo(() => {
     if (!value.trim()) return karuteNames;
     return karuteNames.filter(k => k.kanji.includes(value) || k.kana.includes(value));
   }, [value, karuteNames]);
-  const existsInKarute = karuteNames.some(k => k.kanji === value.trim());
   useEffect(() => {
     function h(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); }
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
-  useEffect(() => { setShowAdd(!!value.trim() && !existsInKarute); }, [value, existsInKarute]);
-  function addToKarute() {
-    try {
-      const raw = localStorage.getItem(KARUTE_KEY);
-      const list = raw ? JSON.parse(raw) : [];
-      list.push({ id: uid(), kanji: value.trim(), kana: "", createdAt: Date.now() });
-      localStorage.setItem(KARUTE_KEY, JSON.stringify(list));
-      setShowAdd(false);
-    } catch {}
-  }
   return (
     <div ref={ref} style={{ position: "relative", flex: 1 }}>
       <input value={value} onChange={e => { onChange(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} placeholder="例：山田 太郎"
         style={{ ...inputSt(), color, fontWeight: value ? 900 : undefined, width: "100%" }} />
       {open && filtered.length > 0 && (
-        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 9999, background: "#fff", border: `1px solid #2563eb44`, borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", maxHeight: 200, overflowY: "auto" }}>
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 9999, background: "#fff", border: "1px solid #2563eb44", borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", maxHeight: 200, overflowY: "auto" }}>
           {filtered.map(k => (
             <div key={k.kanji} onClick={() => { onChange(k.kanji); setOpen(false); }}
               style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${BORDER}`, display: "flex", justifyContent: "space-between" }}
@@ -218,9 +190,6 @@ function NameInput({ value, onChange, karuteNames, color }: {
             </div>
           ))}
         </div>
-      )}
-      {showAdd && (
-        <button onClick={addToKarute} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 11, padding: "3px 8px", borderRadius: 6, border: "1px solid #22c55e88", background: "#dcfce7", color: "#16a34a", cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>＋カルテ追加</button>
       )}
     </div>
   );
@@ -235,7 +204,7 @@ function ContextMenu({ x, y, onDelete, onClose }: { x: number; y: number; onDele
   }, [onClose]);
   return (
     <div ref={ref} style={{ position: "fixed", left: x, top: y, zIndex: 99999, background: "#fff", border: "1px solid #fca5a5", borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.15)", overflow: "hidden", minWidth: 140 }}>
-      <div onClick={onDelete} style={{ padding: "10px 16px", cursor: "pointer", color: "#dc2626", fontSize: 14, fontWeight: 700 }}
+      <div onClick={onDelete} style={{ padding: "10px 16px", cursor: "pointer", color: "#dc2626", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}
         onMouseEnter={e => (e.currentTarget.style.background = "#fee2e2")}
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
       >🗑 削除</div>
@@ -248,6 +217,7 @@ export default function ReceptionPage() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [holidays, setHolidays] = useState<string[]>([]);
   const [showHolidayMgr, setShowHolidayMgr] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "ok" | "offline">("idle");
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d; });
   const [name, setName] = useState("");
   const [gender, setGender] = useState<Gender>("none");
@@ -260,120 +230,86 @@ export default function ReceptionPage() {
   const [karuteNames, setKaruteNames] = useState<{ kanji: string; kana: string }[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [doubleBookWarn, setDoubleBookWarn] = useState<string | null>(null);
-  const [syncStatus, setSyncStatus] = useState<"synced" | "syncing" | "error">("synced");
-  const [toast, setToast] = useState<string | null>(null);
-  const importRef = useRef<HTMLInputElement>(null);
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draggingRef = useRef<{ id: string; startX: number; origMin: number } | null>(null);
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const timelineRef = useRef<HTMLDivElement>(null);
+  const isInitialLoad = useRef(true);
 
-  const isTask    = menuId === "task";
+  const isTask = menuId === "task";
   const isHoliday = holidays.includes(selectedDate);
 
-  function showToast(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
-  }
-
-  // ─── 初期ロード（Supabase → state） ─────────────────────────
   useEffect(() => {
-    async function load() {
-      setSyncStatus("syncing");
-      try {
-        const { data, error } = await supabase.from("reservations").select("*");
-        if (error) throw error;
-        if (data) setReservations(data.map(rowToRes));
-        setSyncStatus("synced");
-      } catch {
-        // Supabase失敗時はlocalStorageにフォールバック
-        try {
-          const raw = localStorage.getItem(LS_KEY);
-          if (raw) { const p = JSON.parse(raw); if (Array.isArray(p)) setReservations(p); }
-        } catch {}
-        setSyncStatus("error");
-      }
-    }
-    load();
-
-    // Karute / Settings はlocalStorageから
     try {
       const savedLabel = localStorage.getItem(TASK_LABEL_KEY);
       if (savedLabel) setTaskLabel(savedLabel);
       const karuteRaw = localStorage.getItem(KARUTE_KEY);
       if (karuteRaw) {
         const list = JSON.parse(karuteRaw);
-        const names = list.map((k: any) => ({ kanji: k.kanji || "", kana: k.kana || "" })).sort((a: any, b: any) => a.kana.localeCompare(b.kana, "ja"));
-        setKaruteNames(names);
+        setKaruteNames(list.map((k: any) => ({ kanji: k.kanji || "", kana: k.kana || "" })).sort((a: any, b: any) => a.kana.localeCompare(b.kana, "ja")));
       }
       const holRaw = localStorage.getItem(HOLIDAY_KEY);
       if (holRaw) { const h = JSON.parse(holRaw); if (Array.isArray(h)) setHolidays(h); }
     } catch {}
 
-    // リアルタイム購読
-    const channel = supabase
-      .channel("reservations-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "reservations" }, (payload) => {
-        if (payload.eventType === "INSERT") {
-          setReservations(prev => {
-            if (prev.find(r => r.id === (payload.new as any).id)) return prev;
-            return [...prev, rowToRes(payload.new)];
-          });
-        } else if (payload.eventType === "UPDATE") {
-          setReservations(prev => prev.map(r => r.id === (payload.new as any).id ? rowToRes(payload.new) : r));
-        } else if (payload.eventType === "DELETE") {
-          setReservations(prev => prev.filter(r => r.id !== (payload.old as any).id));
-        }
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
+    setSyncStatus("syncing");
+    loadFromSheet().then(data => {
+      if (data && data.length > 0) {
+        setReservations(data);
+        localStorage.setItem(LS_KEY, JSON.stringify(data));
+        setSyncStatus("ok");
+      } else {
+        try {
+          const raw = localStorage.getItem(LS_KEY);
+          if (raw) { const p = JSON.parse(raw); if (Array.isArray(p)) setReservations(p); }
+        } catch {}
+        setSyncStatus("offline");
+      }
+      isInitialLoad.current = false;
+    });
   }, []);
 
-  // localStorageにも同期（バックアップ）
-  useEffect(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(reservations)); } catch {} }, [reservations]);
-  useEffect(() => { try { localStorage.setItem(TASK_LABEL_KEY, taskLabel); } catch {} }, [taskLabel]);
-  useEffect(() => { try { localStorage.setItem(HOLIDAY_KEY, JSON.stringify(holidays)); } catch {} }, [holidays]);
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    try { localStorage.setItem(LS_KEY, JSON.stringify(reservations)); } catch {}
+    try { localStorage.setItem(TASK_LABEL_KEY, taskLabel); } catch {}
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    setSyncStatus("syncing");
+    syncTimerRef.current = setTimeout(() => {
+      syncToSheet(reservations).then(() => setSyncStatus("ok")).catch(() => setSyncStatus("offline"));
+    }, 1500);
+  }, [reservations, taskLabel]);
 
-  // ─── バックアップ機能 ────────────────────────────────────────
+  useEffect(() => {
+    try { localStorage.setItem(HOLIDAY_KEY, JSON.stringify(holidays)); } catch {}
+  }, [holidays]);
+
+  function toggleHoliday(ymd: string) {
+    setHolidays(prev => prev.includes(ymd) ? prev.filter(d => d !== ymd) : [...prev, ymd]);
+  }
+
   function exportData() {
-    const data = { reservations, holidays, taskLabel, exportedAt: new Date().toISOString(), version: "v2" };
+    const data = { reservations, holidays, taskLabel, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = `円命堂_バックアップ_${ymdOf(new Date())}.json`;
     a.click(); URL.revokeObjectURL(url);
-    showToast("✅ エクスポート完了");
   }
 
-  async function importData(e: React.ChangeEvent<HTMLInputElement>) {
+  function importData(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = async (ev) => {
+    reader.onload = ev => {
       try {
         const data = JSON.parse(ev.target?.result as string);
-        if (data.reservations && Array.isArray(data.reservations)) {
-          setSyncStatus("syncing");
-          // Supabaseに全件upsert
-          const rows = data.reservations.map(resToRow);
-          const { error } = await supabase.from("reservations").upsert(rows);
-          if (error) throw error;
-          setReservations(data.reservations);
-          if (data.holidays) setHolidays(data.holidays);
-          if (data.taskLabel) setTaskLabel(data.taskLabel);
-          setSyncStatus("synced");
-          showToast(`✅ インポート完了（${data.reservations.length}件）`);
-        }
-      } catch {
-        setSyncStatus("error");
-        showToast("❌ インポート失敗");
-      }
+        if (data.reservations) { setReservations(data.reservations); syncToSheet(data.reservations); }
+        if (data.holidays) setHolidays(data.holidays);
+        if (data.taskLabel) setTaskLabel(data.taskLabel);
+        alert("復元しました");
+      } catch { alert("ファイルが正しくありません"); }
     };
     reader.readAsText(file);
     e.target.value = "";
-  }
-
-  function toggleHoliday(ymd: string) {
-    setHolidays(prev => prev.includes(ymd) ? prev.filter(d => d !== ymd) : [...prev, ymd]);
   }
 
   const menuMap = useMemo(() => { const m = new Map<string, Menu>(); MENUS.forEach(x => m.set(x.id, x)); return m; }, []);
@@ -386,8 +322,7 @@ export default function ReceptionPage() {
 
   const dayReservations = useMemo(() =>
     reservations.filter(r => r.date === selectedDate).sort((a,b) => hhmmToMin(a.start) - hhmmToMin(b.start)),
-    [reservations, selectedDate]
-  );
+    [reservations, selectedDate]);
 
   const sales = useMemo(() => {
     const mk = monthKey(selectedDate);
@@ -437,7 +372,7 @@ export default function ReceptionPage() {
     return null;
   }
 
-  async function addReservation() {
+  function addReservation() {
     if (!isTask && !name.trim()) return;
     const menu = menuMap.get(menuId) ?? MENUS[0];
     const snap = isTask ? TASK_SNAP_MIN : SNAP_MIN;
@@ -450,47 +385,20 @@ export default function ReceptionPage() {
       return;
     }
     const cp = customPriceInput !== "" ? Number(customPriceInput) : undefined;
-    const newRes: Reservation = {
-      id: uid(), date: selectedDate, start, end: endStr,
-      name: isTask ? taskLabel : name.trim(),
-      menuId, memo: memo.trim(), status: "todo",
-      customPrice: cp, gender: isTask ? "none" : gender,
-      createdAt: Date.now(),
-    };
-    setSyncStatus("syncing");
-    const { error } = await supabase.from("reservations").insert(resToRow(newRes));
-    if (error) {
-      setSyncStatus("error");
-      showToast("❌ 保存失敗（ネットワークを確認）");
-    } else {
-      setReservations(prev => [...prev, newRes]);
-      setSyncStatus("synced");
-    }
+    setReservations(prev => [...prev, { id: uid(), date: selectedDate, start, end: endStr, name: isTask ? taskLabel : name.trim(), menuId, memo: memo.trim(), status: "todo", customPrice: cp, gender: isTask ? "none" : gender, createdAt: Date.now() }]);
     setName(""); setMemo(""); setGender("none");
     const m = menuMap.get(menuId);
     setCustomPriceInput(m?.isTask ? "" : String(m?.price ?? ""));
   }
 
-  async function toggleDone(id: string) {
-    const r = reservations.find(x => x.id === id); if (!r || r.status === "cancelled") return;
-    const newStatus = r.status === "done" ? "todo" : "done";
-    setReservations(prev => prev.map(x => x.id === id ? { ...x, status: newStatus } : x));
-    await supabase.from("reservations").update({ status: newStatus }).eq("id", id);
+  function toggleDone(id: string) {
+    setReservations(prev => prev.map(r => { if (r.id !== id) return r; if (r.status === "cancelled") return r; return { ...r, status: r.status === "done" ? "todo" : "done" }; }));
   }
-
-  async function toggleCancelled(id: string, e: React.MouseEvent) {
+  function toggleCancelled(id: string, e: React.MouseEvent) {
     e.stopPropagation();
-    const r = reservations.find(x => x.id === id); if (!r) return;
-    const newStatus = r.status === "cancelled" ? "todo" : "cancelled";
-    setReservations(prev => prev.map(x => x.id === id ? { ...x, status: newStatus } : x));
-    await supabase.from("reservations").update({ status: newStatus }).eq("id", id);
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, status: r.status === "cancelled" ? "todo" : "cancelled" } : r));
   }
-
-  async function removeReservation(id: string) {
-    setReservations(prev => prev.filter(r => r.id !== id));
-    setContextMenu(null);
-    await supabase.from("reservations").delete().eq("id", id);
-  }
+  function removeReservation(id: string) { setReservations(prev => prev.filter(r => r.id !== id)); setContextMenu(null); }
 
   const PX_PER_MIN = useMemo(() => {
     if (typeof window === "undefined") return 2.0;
@@ -518,83 +426,59 @@ export default function ReceptionPage() {
         return { ...rv, start: minToHHMM(clamp(endMin - dur, openMin, closeMin - snap)), end: minToHHMM(endMin) };
       }));
     }
-    async function onMouseUp() {
-      if (draggingRef.current) {
-        const updated = reservations.find(rv => rv.id === draggingRef.current!.id);
-        if (updated) {
-          await supabase.from("reservations").update({ start_time: updated.start, end_time: updated.end }).eq("id", updated.id);
-        }
-      }
-      draggingRef.current = null;
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    }
+    function onMouseUp() { draggingRef.current = null; window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); }
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
   }
 
-  const todayYMD   = ymdOf(new Date());
+  const todayYMD = ymdOf(new Date());
   const labelSlots = getLabelSlots();
   const timelineWidth = totalMin * PX_PER_MIN;
   const gc = GENDER_COLORS[gender];
   const menuOptions = MENUS.map(m => ({ value: m.id, label: m.isTask ? `${m.label}　（売上手入力）` : `${m.label}　¥${money(m.price)}` }));
   const startOptions = getSlots(isTask ? TASK_SNAP_MIN : SNAP_MIN).slice(0, -1).map(t => ({ value: t, label: t }));
 
-  const syncColor = syncStatus === "synced" ? "#22c55e" : syncStatus === "syncing" ? "#f59e0b" : "#ef4444";
-  const syncLabel = syncStatus === "synced" ? "同期済み" : syncStatus === "syncing" ? "同期中..." : "オフライン";
+  const syncLabel = syncStatus === "syncing" ? "⏳ 同期中..." : syncStatus === "ok" ? "✅ 同期済" : syncStatus === "offline" ? "⚠️ オフライン" : "";
+  const syncColor = syncStatus === "syncing" ? "#f59e0b" : syncStatus === "ok" ? "#16a34a" : syncStatus === "offline" ? "#ef4444" : TEXT_SUB;
 
   return (
     <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: "'Hiragino Sans','Yu Gothic UI',sans-serif", padding: "16px" }}
       onClick={() => setContextMenu(null)}>
-      <style>{`* { box-sizing: border-box; } ::-webkit-scrollbar{height:6px;width:6px} ::-webkit-scrollbar-track{background:rgba(0,0,0,0.04);border-radius:3px} ::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.18);border-radius:3px} input::placeholder,textarea::placeholder{color:rgba(0,0,0,0.3)} input[type=number]::-webkit-inner-spin-button{opacity:0.4}`}</style>
+      <style>{`* { box-sizing: border-box; } ::-webkit-scrollbar{height:6px;width:6px} ::-webkit-scrollbar-track{background:rgba(0,0,0,0.04);border-radius:3px} ::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.18);border-radius:3px} input::placeholder,textarea::placeholder{color:rgba(0,0,0,0.3)}`}</style>
 
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={() => removeReservation(contextMenu.id)} onClose={() => setContextMenu(null)} />}
-      {doubleBookWarn && (
-        <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", zIndex: 99999, background: "#dc2626", color: "#fff", padding: "12px 24px", borderRadius: 12, fontWeight: 900, fontSize: 15, boxShadow: "0 4px 20px rgba(220,38,38,0.4)" }}>{doubleBookWarn}</div>
-      )}
-      {toast && (
-        <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", zIndex: 99999, background: toast.startsWith("✅") ? "#16a34a" : "#dc2626", color: "#fff", padding: "12px 24px", borderRadius: 12, fontWeight: 900, fontSize: 15, boxShadow: "0 4px 20px rgba(0,0,0,0.2)" }}>{toast}</div>
-      )}
-
-      <input ref={importRef} type="file" accept=".json" style={{ display: "none" }} onChange={importData} />
+      {doubleBookWarn && <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", zIndex: 99999, background: "#dc2626", color: "#fff", padding: "12px 24px", borderRadius: 12, fontWeight: 900, fontSize: 15 }}>{doubleBookWarn}</div>}
 
       <div style={{ maxWidth: 1600, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
-
-        {/* ヘッダー */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 4, flexWrap: "wrap" }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", boxShadow: "0 0 10px #22c55e" }} />
           <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 1 }}>PEAK MANAGER</div>
           <div style={{ color: TEXT_SUB, fontSize: 14 }}>/ 円命堂 予約管理</div>
-          {/* 同期ステータス */}
-          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, padding: "4px 10px", borderRadius: 8, background: `${syncColor}18`, border: `1px solid ${syncColor}44`, color: syncColor, fontWeight: 700 }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: syncColor }} />
-            {syncLabel}
-          </div>
-          <a href="/stats"  style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#f0f0f0", color: TEXT_SUB, textDecoration: "none", fontWeight: 700 }}>📊 経営指標</a>
+          <a href="/stats" style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#f0f0f0", color: TEXT_SUB, textDecoration: "none", fontWeight: 700 }}>📊 経営指標</a>
           <a href="/karute" style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#f0f0f0", color: TEXT_SUB, textDecoration: "none", fontWeight: 700 }}>📋 クライアントカルテ</a>
           <button onClick={() => setShowHolidayMgr(v => !v)} style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, fontWeight: 700, cursor: "pointer", border: showHolidayMgr ? "1.5px solid #dc2626" : `1px solid ${BORDER}`, background: showHolidayMgr ? "#fee2e2" : "#f0f0f0", color: showHolidayMgr ? "#dc2626" : TEXT_SUB }}>🗓 休日管理</button>
-          <button onClick={exportData} style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, fontWeight: 700, cursor: "pointer", border: "1px solid #16a34a55", background: "#dcfce7", color: "#16a34a" }}>📤 バックアップ</button>
-          <button onClick={() => importRef.current?.click()} style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, fontWeight: 700, cursor: "pointer", border: "1px solid #2563eb55", background: "#dbeafe", color: "#2563eb" }}>📥 復元</button>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-              <span style={{ color: TEXT_SUB }}>見込み</span><span style={{ fontWeight: 900 }}>¥{money(sales.expected)}</span>
-              <span style={{ color: TEXT_SUB }}>|</span>
-              <span style={{ color: TEXT_SUB }}>実績</span><span style={{ fontWeight: 900, color: "#16a34a" }}>¥{money(sales.actual)}</span>
-              <span style={{ color: TEXT_SUB }}>|</span>
-              <span style={{ color: TEXT_SUB }}>{sales.pct}%</span>
-              <div style={{ width: 80, height: 6, borderRadius: 999, background: "rgba(0,0,0,0.08)", overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${clamp(sales.pct,0,100)}%`, background: "linear-gradient(90deg,#22c55e,#3b82f6)", transition: "width 0.4s ease" }} />
-              </div>
+          <button onClick={exportData} style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, border: "1px solid #16a34a44", background: "#dcfce7", color: "#16a34a", cursor: "pointer", fontWeight: 700 }}>📤 バックアップ</button>
+          <label style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, border: "1px solid #2563eb44", background: "#dbeafe", color: "#2563eb", cursor: "pointer", fontWeight: 700 }}>
+            📥 復元<input type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
+          </label>
+          {syncLabel && <div style={{ fontSize: 13, fontWeight: 700, color: syncColor }}>{syncLabel}</div>}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+            <span style={{ color: TEXT_SUB }}>見込み</span><span style={{ fontWeight: 900 }}>¥{money(sales.expected)}</span>
+            <span style={{ color: TEXT_SUB }}>|</span>
+            <span style={{ color: TEXT_SUB }}>実績</span><span style={{ fontWeight: 900, color: "#16a34a" }}>¥{money(sales.actual)}</span>
+            <span style={{ color: TEXT_SUB }}>|</span>
+            <span style={{ color: TEXT_SUB }}>{sales.pct}%</span>
+            <div style={{ width: 80, height: 6, borderRadius: 999, background: "rgba(0,0,0,0.08)", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${clamp(sales.pct,0,100)}%`, background: "linear-gradient(90deg,#22c55e,#3b82f6)", transition: "width 0.4s ease" }} />
             </div>
             <div style={{ color: TEXT_SUB, fontSize: 14 }}>{selectedDate}</div>
           </div>
         </div>
 
-        {/* 休日管理パネル */}
         {showHolidayMgr && (
           <div style={{ ...card(), background: "#fff8f8", border: "1.5px solid #fca5a5" }}>
             <div style={{ fontSize: 15, fontWeight: 900, marginBottom: 10, color: "#dc2626" }}>🗓 休日設定</div>
-            <div style={{ fontSize: 13, color: TEXT_SUB, marginBottom: 12 }}>カレンダーで日付を選択 → 下のボタンで休日設定／解除。</div>
+            <div style={{ fontSize: 13, color: TEXT_SUB, marginBottom: 12 }}>カレンダーで日付を選択 → 下のボタンで休日設定／解除</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ fontSize: 15, fontWeight: 700 }}>選択中：{selectedDate}</div>
               <button onClick={() => toggleHoliday(selectedDate)} style={{ height: 36, padding: "0 18px", borderRadius: 10, fontWeight: 900, cursor: "pointer", fontSize: 14, border: isHoliday ? "1.5px solid #16a34a" : "1.5px solid #dc2626", background: isHoliday ? "#dcfce7" : "#fee2e2", color: isHoliday ? "#16a34a" : "#dc2626" }}>
@@ -605,16 +489,11 @@ export default function ReceptionPage() {
           </div>
         )}
 
-        {isHoliday && (
-          <div style={{ borderRadius: 12, padding: "12px 20px", background: "#fee2e2", border: "1.5px solid #fca5a5", fontWeight: 900, color: "#dc2626", fontSize: 15 }}>
-            🚫 {selectedDate} は休日に設定されています
-          </div>
-        )}
+        {isHoliday && <div style={{ borderRadius: 12, padding: "12px 20px", background: "#fee2e2", border: "1.5px solid #fca5a5", fontWeight: 900, color: "#dc2626", fontSize: 15 }}>🚫 {selectedDate} は休日に設定されています</div>}
 
-        {/* タイムライン */}
         <div style={card()}>
           <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 10 }}>📅 タイムライン <span style={{ color: TEXT_SUB, fontWeight: 400, fontSize: 13 }}>ドラッグで時刻変更（右クリック／長押しで削除）</span></div>
-          <div ref={timelineRef} style={{ overflowX: "auto", paddingBottom: 4 }}>
+          <div style={{ overflowX: "auto", paddingBottom: 4 }}>
             <div style={{ width: timelineWidth, minWidth: "100%" }}>
               <div style={{ display: "flex", marginBottom: 6 }}>
                 {labelSlots.map(t => <div key={t} style={{ width: 60*PX_PER_MIN, fontSize: 12, color: TEXT_SUB, flexShrink: 0 }}>{t}</div>)}
@@ -623,10 +502,10 @@ export default function ReceptionPage() {
                 {labelSlots.map(t => <div key={t} style={{ position: "absolute", left: (hhmmToMin(t)-openMin)*PX_PER_MIN, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.08)" }} />)}
                 {dayReservations.map(r => {
                   const menu = menuMap.get(r.menuId);
-                  const left  = (hhmmToMin(r.start)-openMin)*PX_PER_MIN;
+                  const left = (hhmmToMin(r.start)-openMin)*PX_PER_MIN;
                   const width = (hhmmToMin(r.end)-hhmmToMin(r.start))*PX_PER_MIN;
                   const isDone = r.status==="done", isCancelled = r.status==="cancelled";
-                  const mc  = isCancelled ? CANCEL_COLORS : isDone ? DONE_COLORS : getMenuColor(r.menuId, taskLabel) as any;
+                  const mc = isCancelled ? CANCEL_COLORS : isDone ? DONE_COLORS : getMenuColor(r.menuId, taskLabel) as any;
                   const rgc = GENDER_COLORS[r.gender ?? "none"];
                   return (
                     <div key={r.id} onMouseDown={e => onMouseDown(e, r.id)} onContextMenu={e => onContextMenu(e, r.id)} onTouchStart={e => onTouchStart(e, r.id)} onTouchEnd={onTouchEnd} onTouchMove={onTouchEnd}
@@ -655,10 +534,7 @@ export default function ReceptionPage() {
           </div>
         </div>
 
-        {/* 下段3カラム */}
         <div style={{ display: "grid", gridTemplateColumns: "480px 1fr 360px", gap: 16, alignItems: "start" }}>
-
-          {/* カレンダー */}
           <div style={card()}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
               <div style={{ fontSize: 18, fontWeight: 900 }}>{monthCursor.getFullYear()} / {monthCursor.getMonth()+1}</div>
@@ -692,7 +568,6 @@ export default function ReceptionPage() {
             </div>
           </div>
 
-          {/* 予約入力 */}
           <div style={card()}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
               <div style={{ fontSize: 18, fontWeight: 900 }}>予約入力</div>
@@ -739,7 +614,6 @@ export default function ReceptionPage() {
             </div>
           </div>
 
-          {/* 名簿 */}
           <div style={card()}>
             <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 12 }}>名簿 <span style={{ color: TEXT_SUB, fontSize: 12, fontWeight: 400 }}>（当日 / 最大10件）</span></div>
             {dayReservations.length===0 ? <div style={{ fontSize:14, color:TEXT_SUB, padding:"8px 0" }}>予約なし</div> : (
