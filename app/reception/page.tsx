@@ -33,7 +33,7 @@ const MENUS: Menu[] = [
   { id: "int_new_120", label: "インターナショナル新規（120分）", minutes: 120, price: 18000 },
   { id: "int_r_60", label: "インターナショナルR（60分）", minutes: 60, price: 12000 },
   { id: "stu_new_60", label: "学生新規（高校生迄）（60分）", minutes: 60, price: 6600 },
-  { id: "stu_r_45", label: "学生R（高校生迄）（45分）", minutes: 45, price: 4400 },
+  { id: "stu_r_45", label: "学生R（高校生迄）（30分）", minutes: 30, price: 4400 },
   { id: "task", label: "業務", minutes: 15, price: 0, isTask: true },
 ];
 
