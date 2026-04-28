@@ -8,7 +8,7 @@ const KARUTE_KEY = "enmeidou_karute_v1";
 const HOLIDAY_KEY = "enmeidou_holidays_v1";
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbwHlQQ3TKiY6rKJENfS_dFQNFSdTDlz8fkioEn2nYA_GpQJY1FpqGkIhEqWY131YCT1/exec";
-const SHEET_ID = "17xTuYtuaUdATKvqWPP8Qd7ucHhyfwCh9jpinprAgSp4";
+const SHEET_ID = "1vocHNsUtHv9kKWAl15ly_w_DkdMmiXdXlChQyP246DM";
 
 const OPEN = "09:00";
 const CLOSE = "22:00";
