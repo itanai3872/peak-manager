@@ -7,8 +7,8 @@ const TASK_LABEL_KEY = "enmeidou_task_label";
 const KARUTE_KEY = "enmeidou_karute_v1";
 const HOLIDAY_KEY = "enmeidou_holidays_v1";
 
-const GAS_URL = "https://script.google.com/macros/s/AKfycbwls-BYqDL4-DQKNUtrzfaxZTjnqvcMpZfVrXtvOnbidId3neT09mlcy3aIR_3xKTV8/exec";
-const SHEET_ID = "1vocHNsUtHv9kKWAl15ly_w_DkdMmiXdXlChQyP246DM";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
 
 const OPEN = "09:00";
 const CLOSE = "22:00";
@@ -106,22 +106,28 @@ function inputSt(extra?: React.CSSProperties): React.CSSProperties {
 
 async function syncToSheet(reservations: Reservation[]) {
   try {
-    await fetch(GAS_URL, {
+    await fetch(`${SUPABASE_URL}/rest/v1/sync_data`, {
       method: "POST",
-      mode: "no-cors",
-      body: JSON.stringify({ sheetId: SHEET_ID, reservations }),
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates" },
+      body: JSON.stringify({ key: "reservations", value: JSON.stringify(reservations), updated_at: new Date().toISOString() })
     });
-  } catch {}
+  } catch(e) { console.error(e); }
+} catch {}
 }
 
 async function loadFromSheet(): Promise<Reservation[] | null> {
   try {
-    const res = await fetch(`${GAS_URL}?sheetId=${SHEET_ID}`);
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/sync_data?key=eq.reservations&select=value`, {
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
+    });
     const data = await res.json();
-    if (data.ok && Array.isArray(data.reservations) && data.reservations.length > 0) {
-      return data.reservations;
+    if (data && data[0] && data[0].value) {
+      const reservations = JSON.parse(data[0].value);
+      if (Array.isArray(reservations) && reservations.length > 0) return reservations;
     }
-  } catch {}
+    return null;
+  } catch(e) { return null; }
+} catch {}
   return null;
 }
 
@@ -658,3 +664,7 @@ export default function ReceptionPage() {
     </div>
   );
 }
+
+
+
+
