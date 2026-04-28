@@ -7,7 +7,7 @@ const TASK_LABEL_KEY = "enmeidou_task_label";
 const KARUTE_KEY = "enmeidou_karute_v1";
 const HOLIDAY_KEY = "enmeidou_holidays_v1";
 
-const GAS_URL = "https://script.google.com/macros/s/AKfycbwHlQQ3TKiY6rKJENfS_dFQNFSdTDlz8fkioEn2nYA_GpQJY1FpqGkIhEqWY131YCT1/exec";
+const GAS_URL = "https://script.google.com/macros/s/AKfycbwls-BYqDL4-DQKNUtrzfaxZTjnqvcMpZfVrXtvOnbidId3neT09mlcy3aIR_3xKTV8/exec";
 const SHEET_ID = "1vocHNsUtHv9kKWAl15ly_w_DkdMmiXdXlChQyP246DM";
 
 const OPEN = "09:00";
