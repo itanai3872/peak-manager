@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useMemo, useState, useRef } from "react";
 
@@ -106,21 +106,32 @@ function inputSt(extra?: React.CSSProperties): React.CSSProperties {
 
 async function syncToSheet(reservations: Reservation[]) {
   try {
-    await fetch(GAS_URL, {
+    const SB_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const SB_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    await fetch((SB_URL ?? "") + "/rest/v1/sync_data", {
       method: "POST",
-      mode: "no-cors",
-      body: JSON.stringify({ sheetId: SHEET_ID, reservations }),
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SB_KEY ?? "",
+        "Authorization": "Bearer " + (SB_KEY ?? ""),
+        "Prefer": "resolution=merge-duplicates",
+      },
+      body: JSON.stringify({ id: "reception", data: reservations }),
     });
   } catch {}
 }
-
 async function loadFromSheet(): Promise<Reservation[] | null> {
   try {
-    const res = await fetch(`${GAS_URL}?sheetId=${SHEET_ID}`);
-    const data = await res.json();
-    if (data.ok && Array.isArray(data.reservations) && data.reservations.length > 0) {
-      return data.reservations;
-    }
+    const SB_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const SB_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const res = await fetch(`${SB_URL}/rest/v1/sync_data?id=eq.reception&select=data`, {
+      headers: {
+        "apikey": SB_KEY!,
+        "Authorization": `Bearer ${SB_KEY}`,
+      },
+    });
+    const rows = await res.json();
+    if (Array.isArray(rows) && rows.length > 0) return rows[0].data;
   } catch {}
   return null;
 }
@@ -658,3 +669,4 @@ export default function ReceptionPage() {
     </div>
   );
 }
+
