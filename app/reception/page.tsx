@@ -131,7 +131,7 @@ async function loadFromSheet(): Promise<Reservation[] | null> {
       },
     });
     const rows = await res.json();
-    if (Array.isArray(rows) && rows.length > 0) return rows[0].data;
+    if (Array.isArray(rows) && rows.length > 0) { const raw = rows[0].data; return typeof raw === "string" ? JSON.parse(raw) : raw; }
   } catch {}
   return null;
 }
