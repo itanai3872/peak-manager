@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useMemo, useState, useRef } from "react";
 
@@ -91,14 +91,6 @@ function getMenuColor(menuId: string, taskLabel?: string) {
   return MENU_COLORS.jp;
 }
 
-function getMenuColorByValue(value: string) {
-  if (value === "task") return MENU_COLORS.task;
-  if (value.startsWith("int")) return MENU_COLORS.int;
-  if (value.startsWith("stu")) return MENU_COLORS.stu;
-  if (value.startsWith("jp")) return MENU_COLORS.jp;
-  return null;
-}
-
 function card(extra?: React.CSSProperties): React.CSSProperties {
   return { borderRadius: 16, padding: 20, background: CARD_BG, border: `1px solid ${CARD_BOR}`, boxShadow: "0 2px 12px rgba(0,0,0,0.07)", ...extra };
 }
@@ -151,107 +143,26 @@ function CustomSelect({ value, onChange, options }: {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const selected = options.find(o => o.value === value);
-  const selectedMc = getMenuColorByValue(value);
-
   useEffect(() => {
     function h(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); }
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
-
   return (
     <div ref={ref} style={{ position: "relative", width: "100%" }}>
-      <div
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: "100%",
-          borderRadius: 12,
-          border: `1.5px solid ${open ? "#2563eb" : selectedMc ? selectedMc.border : BORDER}`,
-          background: selectedMc ? selectedMc.border + "18" : "#fafafa",
-          color: TEXT,
-          padding: "11px 36px 11px 14px",
-          fontSize: 15,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          userSelect: "none",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
-          {selectedMc && (
-            <span style={{
-              display: "inline-block",
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              background: selectedMc.badge,
-              flexShrink: 0,
-            }} />
-          )}
-          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: selectedMc ? 700 : 400 }}>
-            {selected?.label ?? ""}
-          </span>
-        </div>
+      <div onClick={() => setOpen(o => !o)} style={{ width: "100%", borderRadius: 12, border: `1px solid ${open ? "#2563eb" : BORDER}`, background: "#fafafa", color: TEXT, padding: "11px 36px 11px 14px", fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", userSelect: "none" }}>
+        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selected?.label ?? ""}</span>
         <span style={{ position: "absolute", right: 12, opacity: 0.4, fontSize: 12 }}>{open ? "▲" : "▼"}</span>
       </div>
       {open && (
-        <div style={{
-          position: "absolute",
-          top: "calc(100% + 4px)",
-          left: 0,
-          right: 0,
-          zIndex: 9999,
-          background: "#fff",
-          border: "1px solid #2563eb44",
-          borderRadius: 12,
-          overflow: "hidden",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-          maxHeight: 320,
-          overflowY: "auto",
-        }}>
-          {options.map(o => {
-            const mc = getMenuColorByValue(o.value);
-            const isSelected = o.value === value;
-            const baseBg = mc
-              ? (isSelected ? mc.border + "33" : mc.border + "12")
-              : (isSelected ? "#dbeafe" : "transparent");
-            const hoverBg = mc ? mc.border + "28" : "#f5f5f5";
-
-            return (
-              <div
-                key={o.value}
-                onClick={() => { onChange(o.value); setOpen(false); }}
-                style={{
-                  padding: "10px 14px 10px 12px",
-                  fontSize: 14,
-                  cursor: "pointer",
-                  background: baseBg,
-                  color: isSelected ? (mc?.badge ?? "#1d4ed8") : TEXT,
-                  borderBottom: `1px solid ${BORDER}`,
-                  borderLeft: mc ? `3px solid ${mc.border}` : "3px solid transparent",
-                  fontWeight: isSelected ? 900 : 400,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-                onMouseEnter={e => (e.currentTarget.style.background = hoverBg)}
-                onMouseLeave={e => (e.currentTarget.style.background = baseBg)}
-              >
-                {mc && (
-                  <span style={{
-                    display: "inline-block",
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: mc.badge,
-                    flexShrink: 0,
-                  }} />
-                )}
-                {o.label}
-              </div>
-            );
-          })}
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 9999, background: "#fff", border: "1px solid #2563eb44", borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", maxHeight: 260, overflowY: "auto" }}>
+          {options.map(o => (
+            <div key={o.value} onClick={() => { onChange(o.value); setOpen(false); }}
+              style={{ padding: "11px 14px", fontSize: 14, cursor: "pointer", background: o.value === value ? "#dbeafe" : "transparent", color: o.value === value ? "#1d4ed8" : TEXT, borderBottom: `1px solid ${BORDER}` }}
+              onMouseEnter={e => (e.currentTarget.style.background = o.value === value ? "#dbeafe" : "#f5f5f5")}
+              onMouseLeave={e => (e.currentTarget.style.background = o.value === value ? "#dbeafe" : "transparent")}
+            >{o.label}</div>
+          ))}
         </div>
       )}
     </div>
@@ -758,3 +669,4 @@ export default function ReceptionPage() {
     </div>
   );
 }
+
