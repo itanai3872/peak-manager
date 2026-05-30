@@ -22,6 +22,7 @@ type Reservation = {
   name: string; menuId: string; memo: string;
   status: ReservationStatus; customPrice?: number;
   gender?: Gender; createdAt: number; customLabel?: string;
+  tentative?: boolean;
 };
 type Menu = { id: string; label: string; minutes: number; price: number; isTask?: boolean; };
 
@@ -78,6 +79,7 @@ const MENU_COLORS = {
 };
 const DONE_COLORS = { bg: "linear-gradient(135deg,#dcfce7,#f0fdf4)", border: "#22c55e", badge: "#16a34a", badgeTxt: "#fff" };
 const CANCEL_COLORS = { bg: "linear-gradient(135deg,#fee2e2,#fff1f2)", border: "#ef4444", badge: "#dc2626", badgeTxt: "#fff" };
+const TENTATIVE_COLORS = { bg: "linear-gradient(135deg,#ecfccb,#f7fee7)", border: "#84cc16", badge: "#65a30d", badgeTxt: "#fff", label: "仮" };
 const GENDER_COLORS = {
   male:   { text: "#1d4ed8", badge: "#2563eb", label: "男" },
   female: { text: "#be185d", badge: "#db2777", label: "女" },
@@ -312,6 +314,116 @@ function ContextMenu({ x, y, onDelete, onClose }: { x: number; y: number; onDele
   );
 }
 
+// ▼▼ ③ 名簿の中で予約を直接編集するための画面 ▼▼
+function EditModal({ reservation, menuMap, karuteNames, taskLabel, allReservations, onClose, onSave }: {
+  reservation: Reservation;
+  menuMap: Map<string, Menu>;
+  karuteNames: { kanji: string; kana: string }[];
+  taskLabel: string;
+  allReservations: Reservation[];
+  onClose: () => void;
+  onSave: (patch: Partial<Reservation>) => void;
+}) {
+  const [menuId, setMenuId] = useState(reservation.menuId);
+  const [start, setStart] = useState(reservation.start);
+  const [name, setName] = useState(reservation.name);
+  const [gender, setGender] = useState<Gender>(reservation.gender ?? "none");
+  const [priceInput, setPriceInput] = useState<string>(
+    reservation.customPrice !== undefined ? String(reservation.customPrice) : String(menuMap.get(reservation.menuId)?.price ?? "")
+  );
+  const [memo, setMemo] = useState(reservation.memo);
+
+  const isTask = menuId === "task";
+  const menu = menuMap.get(menuId) ?? MENUS[0];
+  const snap = isTask ? TASK_SNAP_MIN : SNAP_MIN;
+  const endMin = clamp(hhmmToMin(start) + menu.minutes, openMin + snap, closeMin);
+  const endStr = minToHHMM(endMin);
+
+  const menuOptions = MENUS.map(m => ({ value: m.id, label: m.isTask ? `${m.label}　（売上手入力）` : `${m.label}　¥${money(m.price)}` }));
+  const startOptions = getSlots(isTask ? TASK_SNAP_MIN : SNAP_MIN).slice(0, -1).map(t => ({ value: t, label: t }));
+  const gc = GENDER_COLORS[gender];
+
+  // 自分以外との重複チェック（注意表示のみ・保存はできる）
+  const conflict = useMemo(() => {
+    const ns = hhmmToMin(start), ne = hhmmToMin(endStr);
+    for (const r of allReservations) {
+      if (r.id === reservation.id) continue;
+      if (r.date !== reservation.date) continue;
+      if (r.status === "cancelled") continue;
+      const rs = hhmmToMin(r.start), re = hhmmToMin(r.end);
+      if (ns < re && ne > rs) return r.name || "業務";
+    }
+    return null;
+  }, [start, endStr, allReservations, reservation.id, reservation.date]);
+
+  function handleMenuChange(v: string) {
+    setMenuId(v);
+    const m = MENUS.find(x => x.id === v);
+    if (m) setPriceInput(m.isTask ? "" : String(m.price));
+  }
+
+  function save() {
+    const cp = priceInput !== "" ? Number(priceInput) : undefined;
+    onSave({
+      menuId,
+      start,
+      end: endStr,
+      name: isTask ? taskLabel : (name.trim() || reservation.name),
+      gender: isTask ? "none" : gender,
+      customPrice: cp,
+      memo: memo.trim(),
+    });
+    onClose();
+  }
+
+  return (
+    <div onMouseDown={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 100000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onMouseDown={e => e.stopPropagation()} style={{ ...card(), width: "min(480px,100%)", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>✏️ 予約を編集</div>
+          <button onClick={onClose} style={{ ...miniBtn(), height: 30 }}>閉じる</button>
+        </div>
+        {conflict && (
+          <div style={{ marginBottom: 12, padding: "8px 14px", borderRadius: 10, background: "#fef3c7", border: "1.5px solid #f59e0b", color: "#92400e", fontWeight: 700, fontSize: 13 }}>
+            ⚠️ この時間帯は「{conflict}」と重複しています（保存は可能です）
+          </div>
+        )}
+        <div style={{ display: "grid", gap: 14 }}>
+          <div><label style={labelSt()}>メニュー（コース）</label><CustomSelect value={menuId} onChange={handleMenuChange} options={menuOptions} /></div>
+          {!isTask && (
+            <div>
+              <label style={labelSt()}>氏名</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {(["male", "female", "none"] as Gender[]).map(g => {
+                  const gc2 = GENDER_COLORS[g]; const a = gender === g;
+                  return <button key={g} onClick={() => setGender(g)} style={{ flexShrink: 0, height: 46, padding: "0 16px", borderRadius: 12, border: a ? `2px solid ${gc2.badge}` : `1px solid ${BORDER}`, background: a ? `${gc2.badge}22` : CARD_BG, color: a ? gc2.text : TEXT_SUB, fontWeight: 900, fontSize: 14, cursor: "pointer" }}>{gc2.label}</button>;
+                })}
+                <NameInput value={name} onChange={setName} karuteNames={karuteNames} color={gc.text} />
+              </div>
+            </div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div><label style={labelSt()}>開始時刻</label><CustomSelect value={start} onChange={setStart} options={startOptions} /></div>
+            <div><label style={labelSt()}>終了（自動）</label><input value={endStr} readOnly style={inputSt({ opacity: 0.75 })} /></div>
+          </div>
+          <div>
+            <label style={labelSt()}>金額（変更可）</label>
+            <div style={{ position: "relative" }}>
+              <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: TEXT_SUB, fontSize: 15, pointerEvents: "none" }}>¥</span>
+              <input type="number" value={priceInput} onChange={e => setPriceInput(e.target.value)} style={{ ...inputSt(), paddingLeft: 26 }} />
+            </div>
+          </div>
+          <div><label style={labelSt()}>メモ</label><textarea value={memo} onChange={e => setMemo(e.target.value)} style={inputSt({ minHeight: 70, resize: "vertical" })} /></div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={save} style={{ flex: 1, height: 46, borderRadius: 12, border: "1.5px solid #2563eb", background: "#2563eb", color: "#fff", fontWeight: 900, fontSize: 15, cursor: "pointer" }}>保存する</button>
+            <button onClick={onClose} style={{ height: 46, padding: "0 20px", borderRadius: 12, border: `1px solid ${BORDER}`, background: "#f0f0f0", color: TEXT, fontWeight: 900, fontSize: 15, cursor: "pointer" }}>キャンセル</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ReceptionPage() {
   const [selectedDate, setSelectedDate] = useState(() => ymdOf(new Date()));
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -330,6 +442,7 @@ export default function ReceptionPage() {
   const [karuteNames, setKaruteNames] = useState<{ kanji: string; kana: string }[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [doubleBookWarn, setDoubleBookWarn] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draggingRef = useRef<{ id: string; startX: number; origMin: number } | null>(null);
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -351,19 +464,27 @@ export default function ReceptionPage() {
       if (holRaw) { const h = JSON.parse(holRaw); if (Array.isArray(h)) setHolidays(h); }
     } catch {}
 
+    // --- データ読み込み（手元のデータを絶対に失わないための安全策つき） ---
     setSyncStatus("syncing");
-    loadFromSheet().then(data => {
-      if (data && data.length > 0) {
-        setReservations(data);
-        localStorage.setItem(LS_KEY, JSON.stringify(data));
-        setSyncStatus("ok");
-      } else {
-        try {
-          const raw = localStorage.getItem(LS_KEY);
-          if (raw) { const p = JSON.parse(raw); if (Array.isArray(p)) setReservations(p); }
-        } catch {}
-        setSyncStatus("offline");
+    let localData: Reservation[] = [];
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) { const p = JSON.parse(raw); if (Array.isArray(p)) localData = p; }
+    } catch {}
+    loadFromSheet().then(remote => {
+      const remoteData = Array.isArray(remote) ? remote : [];
+      // クラウド側が手元より少ない（＝古い/空の可能性）なら、手元を優先する。
+      // これにより「古いクラウドデータで手元の予約が上書き消去される」事故を防ぐ。
+      const chosen = remoteData.length >= localData.length ? remoteData : localData;
+      if (chosen.length > 0) {
+        setReservations(chosen);
+        try { localStorage.setItem(LS_KEY, JSON.stringify(chosen)); } catch {}
       }
+      setSyncStatus(remoteData.length > 0 ? "ok" : "offline");
+      isInitialLoad.current = false;
+    }).catch(() => {
+      if (localData.length > 0) setReservations(localData);
+      setSyncStatus("offline");
       isInitialLoad.current = false;
     });
   }, []);
@@ -429,7 +550,8 @@ export default function ReceptionPage() {
     let expected = 0, actual = 0;
     reservations.forEach(r => {
       if (monthKey(r.date) !== mk) return;
-      if (r.status === "cancelled" || r.menuId === "task") return;
+      // 仮予約は本予約になるまで売上に含めない
+      if (r.status === "cancelled" || r.menuId === "task" || r.tentative) return;
       const price = getPrice(r, menuMap);
       expected += price;
       if (r.status === "done") actual += price;
@@ -472,7 +594,7 @@ export default function ReceptionPage() {
     return null;
   }
 
-  function addReservation() {
+  function addReservation(tentative: boolean = false) {
     if (!isTask && !name.trim()) return;
     const menu = menuMap.get(menuId) ?? MENUS[0];
     const snap = isTask ? TASK_SNAP_MIN : SNAP_MIN;
@@ -485,7 +607,7 @@ export default function ReceptionPage() {
       return;
     }
     const cp = customPriceInput !== "" ? Number(customPriceInput) : undefined;
-    setReservations(prev => [...prev, { id: uid(), date: selectedDate, start, end: endStr, name: isTask ? taskLabel : name.trim(), menuId, memo: memo.trim(), status: "todo", customPrice: cp, gender: isTask ? "none" : gender, createdAt: Date.now() }]);
+    setReservations(prev => [...prev, { id: uid(), date: selectedDate, start, end: endStr, name: isTask ? taskLabel : name.trim(), menuId, memo: memo.trim(), status: "todo", customPrice: cp, gender: isTask ? "none" : gender, createdAt: Date.now(), tentative: tentative ? true : undefined }]);
     setName(""); setMemo(""); setGender("none");
     const m = menuMap.get(menuId);
     setCustomPriceInput(m?.isTask ? "" : String(m?.price ?? ""));
@@ -499,6 +621,23 @@ export default function ReceptionPage() {
     setReservations(prev => prev.map(r => r.id === id ? { ...r, status: r.status === "cancelled" ? "todo" : "cancelled" } : r));
   }
   function removeReservation(id: string) { setReservations(prev => prev.filter(r => r.id !== id)); setContextMenu(null); }
+  // 削除前に確認する（うっかり消し対策）
+  function confirmRemove(id: string) {
+    setContextMenu(null);
+    const r = reservations.find(x => x.id === id);
+    const who = r ? (r.menuId === "task" ? (r.memo || taskLabel) : r.name) : "";
+    if (window.confirm(`「${r?.start ?? ""}–${r?.end ?? ""}　${who}」を削除します。よろしいですか？`)) {
+      removeReservation(id);
+    }
+  }
+  // ③ 名簿内で内容を変更（編集モーダルから呼ばれる）
+  function updateReservation(id: string, patch: Partial<Reservation>) {
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+  }
+  // 仮予約 → 通常予約 に切り替え
+  function releaseTentative(id: string) {
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, tentative: undefined } : r));
+  }
 
   const PX_PER_MIN = useMemo(() => {
     if (typeof window === "undefined") return 2.0;
@@ -537,6 +676,8 @@ export default function ReceptionPage() {
   const gc = GENDER_COLORS[gender];
   const menuOptions = MENUS.map(m => ({ value: m.id, label: m.isTask ? `${m.label}　（売上手入力）` : `${m.label}　¥${money(m.price)}` }));
   const startOptions = getSlots(isTask ? TASK_SNAP_MIN : SNAP_MIN).slice(0, -1).map(t => ({ value: t, label: t }));
+  const canAdd = isTask || !!name.trim();
+  const editingReservation = editingId ? (reservations.find(r => r.id === editingId) ?? null) : null;
 
   const syncLabel = syncStatus === "syncing" ? "⏳ 同期中..." : syncStatus === "ok" ? "✅ 同期済" : syncStatus === "offline" ? "⚠️ オフライン" : "";
   const syncColor = syncStatus === "syncing" ? "#f59e0b" : syncStatus === "ok" ? "#16a34a" : syncStatus === "offline" ? "#ef4444" : TEXT_SUB;
@@ -546,7 +687,18 @@ export default function ReceptionPage() {
       onClick={() => setContextMenu(null)}>
       <style>{`* { box-sizing: border-box; } ::-webkit-scrollbar{height:6px;width:6px} ::-webkit-scrollbar-track{background:rgba(0,0,0,0.04);border-radius:3px} ::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.18);border-radius:3px} input::placeholder,textarea::placeholder{color:rgba(0,0,0,0.3)}`}</style>
 
-      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={() => removeReservation(contextMenu.id)} onClose={() => setContextMenu(null)} />}
+      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={() => confirmRemove(contextMenu.id)} onClose={() => setContextMenu(null)} />}
+      {editingReservation && (
+        <EditModal
+          reservation={editingReservation}
+          menuMap={menuMap}
+          karuteNames={karuteNames}
+          taskLabel={taskLabel}
+          allReservations={reservations}
+          onClose={() => setEditingId(null)}
+          onSave={(patch) => updateReservation(editingReservation.id, patch)}
+        />
+      )}
       {doubleBookWarn && <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", zIndex: 99999, background: "#dc2626", color: "#fff", padding: "12px 24px", borderRadius: 12, fontWeight: 900, fontSize: 15 }}>{doubleBookWarn}</div>}
 
       <div style={{ maxWidth: 1600, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
@@ -592,7 +744,7 @@ export default function ReceptionPage() {
         {isHoliday && <div style={{ borderRadius: 12, padding: "12px 20px", background: "#fee2e2", border: "1.5px solid #fca5a5", fontWeight: 900, color: "#dc2626", fontSize: 15 }}>🚫 {selectedDate} は休日に設定されています</div>}
 
         <div style={card()}>
-          <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 10 }}>📅 タイムライン <span style={{ color: TEXT_SUB, fontWeight: 400, fontSize: 13 }}>ドラッグで時刻変更（右クリック／長押しで削除）</span></div>
+          <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 10 }}>📅 タイムライン <span style={{ color: TEXT_SUB, fontWeight: 400, fontSize: 13 }}>ドラッグで時刻変更／右上の × ボタンで削除（右クリック・長押しでも削除）</span></div>
           <div style={{ overflowX: "auto", paddingBottom: 4 }}>
             <div style={{ width: timelineWidth, minWidth: "100%" }}>
               <div style={{ display: "flex", marginBottom: 6 }}>
@@ -604,15 +756,15 @@ export default function ReceptionPage() {
                   const menu = menuMap.get(r.menuId);
                   const left = (hhmmToMin(r.start)-openMin)*PX_PER_MIN;
                   const width = (hhmmToMin(r.end)-hhmmToMin(r.start))*PX_PER_MIN;
-                  const isDone = r.status==="done", isCancelled = r.status==="cancelled";
-                  const mc = isCancelled ? CANCEL_COLORS : isDone ? DONE_COLORS : getMenuColor(r.menuId, taskLabel) as any;
+                  const isDone = r.status==="done", isCancelled = r.status==="cancelled", isTentative = !!r.tentative;
+                  const mc = isCancelled ? CANCEL_COLORS : isTentative ? TENTATIVE_COLORS : isDone ? DONE_COLORS : getMenuColor(r.menuId, taskLabel) as any;
                   const rgc = GENDER_COLORS[r.gender ?? "none"];
                   return (
                     <div key={r.id} onMouseDown={e => onMouseDown(e, r.id)} onContextMenu={e => onContextMenu(e, r.id)} onTouchStart={e => onTouchStart(e, r.id)} onTouchEnd={onTouchEnd} onTouchMove={onTouchEnd}
                       style={{ position: "absolute", left, top: 4, height: 88, width: Math.max(width, 48), cursor: "grab", zIndex: 5, userSelect: "none", opacity: isCancelled ? 0.6 : 1 }}>
                       <div style={{ height: "100%", borderRadius: 10, padding: "6px 8px", background: mc.bg, border: `1.5px solid ${mc.border}`, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2, boxShadow: "0 2px 8px rgba(0,0,0,0.10)" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <span style={{ fontSize: 10, fontWeight: 900, padding: "1px 5px", borderRadius: 4, background: mc.badge, color: mc.badgeTxt, flexShrink: 0 }}>{isCancelled?"取消":isDone?"済":mc.label}</span>
+                          <span style={{ fontSize: 10, fontWeight: 900, padding: "1px 5px", borderRadius: 4, background: mc.badge, color: mc.badgeTxt, flexShrink: 0 }}>{isCancelled?"取消":isTentative?"仮":isDone?"済":mc.label}</span>
                           <span style={{ fontSize: 11, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: TEXT }}>{r.start}–{r.end}</span>
                         </div>
                         {r.menuId !== "task" && (
@@ -626,6 +778,14 @@ export default function ReceptionPage() {
                           {r.menuId === "task" ? (getPrice(r,menuMap)>0?`¥${money(getPrice(r,menuMap))}`:"") : `${menu?.label} · ¥${money(getPrice(r,menuMap))}`}
                         </div>
                       </div>
+                      {/* ① タイムライン上で削除（×ボタン） */}
+                      <button
+                        onMouseDown={e => e.stopPropagation()}
+                        onTouchStart={e => e.stopPropagation()}
+                        onClick={e => { e.stopPropagation(); confirmRemove(r.id); }}
+                        title="この予約を削除"
+                        style={{ position: "absolute", top: 2, right: 2, width: 20, height: 20, borderRadius: 6, border: "1px solid rgba(220,38,38,0.4)", background: "rgba(255,255,255,0.9)", color: "#dc2626", fontSize: 13, fontWeight: 900, lineHeight: 1, cursor: "pointer", zIndex: 6, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+                      >×</button>
                     </div>
                   );
                 })}
@@ -669,9 +829,12 @@ export default function ReceptionPage() {
           </div>
 
           <div style={card()}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 8, flexWrap: "wrap" }}>
               <div style={{ fontSize: 18, fontWeight: 900 }}>予約入力</div>
-              <button onClick={addReservation} disabled={!isTask && !name.trim()} style={{ height: 36, padding: "0 16px", borderRadius: 10, border: (isTask||name.trim())?"1.5px solid #2563eb":`1px solid ${BORDER}`, background: (isTask||name.trim())?"#2563eb":"#f0f0f0", color: (isTask||name.trim())?"#fff":TEXT_SUB, fontWeight: 900, fontSize: 13, cursor: (isTask||name.trim())?"pointer":"not-allowed", whiteSpace: "nowrap" }}>＋ {isTask?taskLabel:"予約"}を追加</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => addReservation(false)} disabled={!canAdd} style={{ height: 36, padding: "0 16px", borderRadius: 10, border: canAdd?"1.5px solid #2563eb":`1px solid ${BORDER}`, background: canAdd?"#2563eb":"#f0f0f0", color: canAdd?"#fff":TEXT_SUB, fontWeight: 900, fontSize: 13, cursor: canAdd?"pointer":"not-allowed", whiteSpace: "nowrap" }}>＋ {isTask?taskLabel:"予約"}を追加</button>
+                <button onClick={() => addReservation(true)} disabled={!canAdd} title="黄緑色で仮予約として登録します" style={{ height: 36, padding: "0 14px", borderRadius: 10, border: canAdd?"1.5px solid #65a30d":`1px solid ${BORDER}`, background: canAdd?"#a3e635":"#f0f0f0", color: canAdd?"#365314":TEXT_SUB, fontWeight: 900, fontSize: 13, cursor: canAdd?"pointer":"not-allowed", whiteSpace: "nowrap" }}>仮予約</button>
+              </div>
             </div>
             {(() => {
               const menu = menuMap.get(menuId); if (!menu) return null;
@@ -715,20 +878,21 @@ export default function ReceptionPage() {
           </div>
 
           <div style={card()}>
-            <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 12 }}>名簿 <span style={{ color: TEXT_SUB, fontSize: 12, fontWeight: 400 }}>（当日 / 最大10件）</span></div>
+            <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 12 }}>名簿 <span style={{ color: TEXT_SUB, fontSize: 12, fontWeight: 400 }}>（当日 {dayReservations.length}件）</span></div>
             {dayReservations.length===0 ? <div style={{ fontSize:14, color:TEXT_SUB, padding:"8px 0" }}>予約なし</div> : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                {dayReservations.slice(0,10).map(r => {
-                  const menu=menuMap.get(r.menuId), isDone=r.status==="done", isCancelled=r.status==="cancelled";
-                  const mc=isCancelled?CANCEL_COLORS:isDone?DONE_COLORS:getMenuColor(r.menuId,taskLabel) as any;
+              <div style={{ display: "flex", flexDirection: "column", gap: 7, maxHeight: "65vh", overflowY: "auto", paddingRight: 4 }}>
+                {dayReservations.map(r => {
+                  const menu=menuMap.get(r.menuId), isDone=r.status==="done", isCancelled=r.status==="cancelled", isTentative=!!r.tentative;
+                  const mc=isCancelled?CANCEL_COLORS:isTentative?TENTATIVE_COLORS:isDone?DONE_COLORS:getMenuColor(r.menuId,taskLabel) as any;
                   const rgc=GENDER_COLORS[r.gender??"none"], price=getPrice(r,menuMap);
                   const isCustom=r.customPrice!==undefined&&r.customPrice!==menu?.price, isTaskItem=r.menuId==="task";
+                  const rowBg = isCancelled?"#fee2e2":isTentative?"#f7fee7":isDone?"#dcfce7":CARD_BG;
                   return (
-                    <div key={r.id} onClick={() => toggleDone(r.id)} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 12px", borderRadius:12, background:isCancelled?"#fee2e2":isDone?"#dcfce7":CARD_BG, border:`1.5px solid ${mc.border}`, cursor:"pointer", opacity:isCancelled?0.75:1, boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
+                    <div key={r.id} onClick={() => toggleDone(r.id)} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 12px", borderRadius:12, background:rowBg, border:`1.5px solid ${mc.border}`, cursor:"pointer", opacity:isCancelled?0.75:1, boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
                       <div style={{ width:22, height:22, borderRadius:"50%", flexShrink:0, border:`2px solid ${mc.border}`, background:isCancelled?"#fca5a5":isDone?"#86efac":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:isCancelled?"#dc2626":"#16a34a" }}>{isCancelled?"✕":isDone?"✓":""}</div>
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3 }}>
-                          <span style={{ fontSize:10, fontWeight:900, padding:"2px 6px", borderRadius:4, background:mc.badge, color:mc.badgeTxt, flexShrink:0 }}>{isCancelled?"取消":isDone?"済":mc.label}</span>
+                          <span style={{ fontSize:10, fontWeight:900, padding:"2px 6px", borderRadius:4, background:mc.badge, color:mc.badgeTxt, flexShrink:0 }}>{isCancelled?"取消":isTentative?"仮":isDone?"済":mc.label}</span>
                           {!isTaskItem&&(r.gender??"none")!=="none"&&<span style={{ fontSize:10, fontWeight:900, padding:"2px 5px", borderRadius:4, background:rgc.badge, color:"#fff", flexShrink:0 }}>{rgc.label}</span>}
                           <span style={{ fontSize:13, fontWeight:900, color:isTaskItem?TEXT_SUB:rgc.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", textDecoration:isCancelled?"line-through":"none" }}>{r.start}–{r.end}　{isTaskItem?taskLabel:r.name}</span>
                         </div>
@@ -737,9 +901,11 @@ export default function ReceptionPage() {
                           {price>0&&<span style={{ color:isCustom?"#d97706":undefined, fontWeight:isCustom?900:undefined }}>　¥{money(price)}</span>}
                         </div>
                       </div>
-                      <div style={{ display:"flex", flexDirection:"column", gap:3, flexShrink:0 }}>
-                        <button onClick={e=>toggleCancelled(r.id,e)} style={{ width:44, height:22, borderRadius:6, border:isCancelled?"1.5px solid #dc2626":`1px solid ${BORDER}`, background:isCancelled?"#fee2e2":CARD_BG, color:isCancelled?"#dc2626":TEXT_SUB, cursor:"pointer", fontSize:10, fontWeight:900 }}>取消</button>
-                        <button onClick={e=>{e.stopPropagation();removeReservation(r.id);}} style={{ width:44, height:22, borderRadius:6, border:`1px solid ${BORDER}`, background:CARD_BG, color:TEXT_SUB, cursor:"pointer", fontSize:12 }}>×</button>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:3, flexShrink:0, width:108 }}>
+                        <button onClick={e=>{e.stopPropagation();setEditingId(r.id);}} style={{ height:22, borderRadius:6, border:"1px solid #2563eb44", background:"#eff6ff", color:"#2563eb", cursor:"pointer", fontSize:10, fontWeight:900 }}>編集</button>
+                        {isTentative && <button onClick={e=>{e.stopPropagation();releaseTentative(r.id);}} title="仮予約を解除して通常予約にします" style={{ height:22, borderRadius:6, border:"1.5px solid #65a30d", background:"#ecfccb", color:"#365314", cursor:"pointer", fontSize:10, fontWeight:900 }}>本予約</button>}
+                        <button onClick={e=>toggleCancelled(r.id,e)} style={{ height:22, borderRadius:6, border:isCancelled?"1.5px solid #dc2626":`1px solid ${BORDER}`, background:isCancelled?"#fee2e2":CARD_BG, color:isCancelled?"#dc2626":TEXT_SUB, cursor:"pointer", fontSize:10, fontWeight:900 }}>取消</button>
+                        <button onClick={e=>{e.stopPropagation();confirmRemove(r.id);}} style={{ height:22, borderRadius:6, border:`1px solid ${BORDER}`, background:CARD_BG, color:TEXT_SUB, cursor:"pointer", fontSize:12 }}>×</button>
                       </div>
                     </div>
                   );
@@ -748,8 +914,11 @@ export default function ReceptionPage() {
             )}
             {dayReservations.length>0&&(
               <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${BORDER}`, display:"flex", justifyContent:"space-between", fontSize:13, color:TEXT_SUB }}>
-                <span>本日 {dayReservations.filter(r=>r.status!=="cancelled"&&r.menuId!=="task").length}件</span>
-                <span>¥{money(dayReservations.filter(r=>r.status!=="cancelled"&&r.menuId!=="task").reduce((s,r)=>s+getPrice(r,menuMap),0))}</span>
+                <span>
+                  本日 {dayReservations.filter(r=>r.status!=="cancelled"&&r.menuId!=="task"&&!r.tentative).length}件
+                  {dayReservations.filter(r=>r.status!=="cancelled"&&r.menuId!=="task"&&r.tentative).length>0 && <span style={{ color:"#65a30d", fontWeight:900 }}>　仮{dayReservations.filter(r=>r.status!=="cancelled"&&r.menuId!=="task"&&r.tentative).length}件</span>}
+                </span>
+                <span>¥{money(dayReservations.filter(r=>r.status!=="cancelled"&&r.menuId!=="task"&&!r.tentative).reduce((s,r)=>s+getPrice(r,menuMap),0))}</span>
               </div>
             )}
           </div>
