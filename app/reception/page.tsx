@@ -333,11 +333,15 @@ function EditModal({ reservation, menuMap, karuteNames, taskLabel, allReservatio
     reservation.customPrice !== undefined ? String(reservation.customPrice) : String(menuMap.get(reservation.menuId)?.price ?? "")
   );
   const [memo, setMemo] = useState(reservation.memo);
+  const [taskDur, setTaskDur] = useState<number>(() => {
+    const d = hhmmToMin(reservation.end) - hhmmToMin(reservation.start);
+    return d > 0 ? d : 60;
+  });
 
   const isTask = menuId === "task";
   const menu = menuMap.get(menuId) ?? MENUS[0];
   const snap = isTask ? TASK_SNAP_MIN : SNAP_MIN;
-  const endMin = clamp(hhmmToMin(start) + menu.minutes, openMin + snap, closeMin);
+  const endMin = clamp(hhmmToMin(start) + (isTask ? taskDur : menu.minutes), openMin + snap, closeMin);
   const endStr = minToHHMM(endMin);
 
   const menuOptions = MENUS.map(m => ({ value: m.id, label: m.isTask ? `${m.label}　（売上手入力）` : `${m.label}　¥${money(m.price)}` }));
@@ -403,6 +407,14 @@ function EditModal({ reservation, menuMap, karuteNames, taskLabel, allReservatio
               </div>
             </div>
           )}
+          {isTask && (
+            <div>
+              <label style={labelSt()}>業務の長さ</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[30,60,90,120,180].map(m => { const a = taskDur === m; return <button key={m} onClick={() => setTaskDur(m)} style={{ flex: 1, minWidth: 56, height: 42, borderRadius: 10, border: a?"2px solid #2563eb":`1px solid ${BORDER}`, background: a?"#dbeafe":CARD_BG, color: a?"#1d4ed8":TEXT_SUB, fontWeight: 900, fontSize: 14, cursor: "pointer" }}>{m}分</button>; })}
+              </div>
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div><label style={labelSt()}>開始時刻</label><CustomSelect value={start} onChange={setStart} options={startOptions} /></div>
             <div><label style={labelSt()}>終了（自動）</label><input value={endStr} readOnly style={inputSt({ opacity: 0.75 })} /></div>
@@ -439,6 +451,7 @@ export default function ReceptionPage() {
   const [memo, setMemo] = useState("");
   const [customPriceInput, setCustomPriceInput] = useState<string>(String(MENUS[0].price));
   const [taskLabel, setTaskLabel] = useState("業務");
+  const [taskMinutes, setTaskMinutes] = useState(60);
   const [editingTaskLabel, setEditingTaskLabel] = useState(false);
   const [karuteNames, setKaruteNames] = useState<{ kanji: string; kana: string }[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
@@ -599,7 +612,8 @@ export default function ReceptionPage() {
     if (!isTask && !name.trim()) return;
     const menu = menuMap.get(menuId) ?? MENUS[0];
     const snap = isTask ? TASK_SNAP_MIN : SNAP_MIN;
-    const endMin = clamp(hhmmToMin(start) + menu.minutes, openMin + snap, closeMin);
+    const dur = isTask ? taskMinutes : menu.minutes;
+    const endMin = clamp(hhmmToMin(start) + dur, openMin + snap, closeMin);
     const endStr = minToHHMM(endMin);
     const conflict = checkDoubleBooking(start, endStr);
     if (conflict) {
@@ -666,7 +680,7 @@ export default function ReceptionPage() {
       const newStartMin = clamp(draggingRef.current.origMin + dMin, openMin, closeMin - snap);
       setReservations(prev => prev.map(rv => {
         if (rv.id !== draggingRef.current!.id) return rv;
-        const dur = (menuMap.get(rv.menuId)?.minutes) ?? (hhmmToMin(rv.end) - hhmmToMin(rv.start));
+        const dur = hhmmToMin(rv.end) - hhmmToMin(rv.start);
         const endMin = clamp(newStartMin + dur, openMin + snap, closeMin);
         return { ...rv, start: minToHHMM(clamp(endMin - dur, openMin, closeMin - snap)), end: minToHHMM(endMin) };
       }));
@@ -850,6 +864,10 @@ export default function ReceptionPage() {
                   <label style={labelSt()}>業務名称</label>
                   <div style={{ display: "flex", gap: 8 }}>
                     {editingTaskLabel ? (<><input value={taskLabel} onChange={e => setTaskLabel(e.target.value)} style={{ ...inputSt(), flex: 1 }} /><button onClick={() => setEditingTaskLabel(false)} style={miniBtn(true)}>確定</button></>) : (<><div style={{ ...inputSt(), flex: 1, display: "flex", alignItems: "center" }}>{taskLabel}</div><button onClick={() => setEditingTaskLabel(true)} style={miniBtn()}>変更</button></>)}
+                  </div>
+                  <label style={{ ...labelSt(), marginTop: 12 }}>業務の長さ</label>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {[30,60,90,120,180].map(m => { const a = taskMinutes === m; return <button key={m} onClick={() => setTaskMinutes(m)} style={{ flex: 1, minWidth: 56, height: 42, borderRadius: 10, border: a?"2px solid #2563eb":`1px solid ${BORDER}`, background: a?"#dbeafe":CARD_BG, color: a?"#1d4ed8":TEXT_SUB, fontWeight: 900, fontSize: 14, cursor: "pointer" }}>{m}分</button>; })}
                   </div>
                 </div>
               ) : (
