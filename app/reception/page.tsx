@@ -747,8 +747,9 @@ export default function ReceptionPage() {
           <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 10 }}>📅 タイムライン <span style={{ color: TEXT_SUB, fontWeight: 400, fontSize: 13 }}>ドラッグで時刻変更／右上の × ボタンで削除（右クリック・長押しでも削除）</span></div>
           <div style={{ overflowX: "auto", paddingBottom: 4 }}>
             <div style={{ width: timelineWidth, minWidth: "100%" }}>
-              <div style={{ display: "flex", marginBottom: 6 }}>
-                {labelSlots.map(t => <div key={t} style={{ width: 60*PX_PER_MIN, fontSize: 12, color: TEXT_SUB, flexShrink: 0 }}>{t}</div>)}
+              <div style={{ display: "flex", marginBottom: 6, position: "relative" }}>
+                {labelSlots.map(t => <div key={t} style={{ position: "absolute", left: (hhmmToMin(t)-openMin)*PX_PER_MIN, fontSize: 12, color: TEXT_SUB }}>{t}</div>)}
+                <div style={{ height: 18 }} />
               </div>
               <div style={{ position: "relative", height: 96, background: "#f8f6f2", borderRadius: 14, border: `1px solid ${BORDER}` }}>
                 {labelSlots.map(t => <div key={t} style={{ position: "absolute", left: (hhmmToMin(t)-openMin)*PX_PER_MIN, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.08)" }} />)}
@@ -888,10 +889,10 @@ export default function ReceptionPage() {
                     <div key={r.id} onClick={() => toggleDone(r.id)} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 12px", borderRadius:12, background:rowBg, border:`1.5px solid ${mc.border}`, cursor:"pointer", opacity:isCancelled?0.75:1, boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
                       <div style={{ width:22, height:22, borderRadius:"50%", flexShrink:0, border:`2px solid ${mc.border}`, background:isCancelled?"#fca5a5":isDone?"#86efac":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:isCancelled?"#dc2626":"#16a34a" }}>{isCancelled?"✕":isDone?"✓":""}</div>
                       <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3, flexWrap:"wrap" }}>
                           <span style={{ fontSize:10, fontWeight:900, padding:"2px 6px", borderRadius:4, background:mc.badge, color:mc.badgeTxt, flexShrink:0 }}>{isCancelled?"取消":isTentative?"仮":isDone?"済":mc.label}</span>
                           {!isTaskItem&&(r.gender??"none")!=="none"&&<span style={{ fontSize:10, fontWeight:900, padding:"2px 5px", borderRadius:4, background:rgc.badge, color:"#fff", flexShrink:0 }}>{rgc.label}</span>}
-                          <span style={{ fontSize:13, fontWeight:900, color:isTaskItem?TEXT_SUB:rgc.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", textDecoration:isCancelled?"line-through":"none" }}>{r.start}–{r.end}　{isTaskItem?taskLabel:r.name}</span>
+                          <span style={{ fontSize:13, fontWeight:900, color:isTaskItem?TEXT_SUB:rgc.text, wordBreak:"break-all", lineHeight:1.3, textDecoration:isCancelled?"line-through":"none" }}>{r.start}–{r.end}　{isTaskItem?taskLabel:r.name}</span>
                         </div>
                         <div style={{ fontSize:12, color:TEXT_SUB, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
                           {isTaskItem?(r.memo||taskLabel):menu?.label}
