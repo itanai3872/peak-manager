@@ -747,12 +747,9 @@ export default function ReceptionPage() {
           <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 10 }}>📅 タイムライン <span style={{ color: TEXT_SUB, fontWeight: 400, fontSize: 13 }}>ドラッグで時刻変更／右上の × ボタンで削除（右クリック・長押しでも削除）</span></div>
           <div style={{ overflowX: "auto", paddingBottom: 4 }}>
             <div style={{ width: timelineWidth, minWidth: "100%" }}>
-              <div style={{ display: "flex", marginBottom: 6, position: "relative" }}>
-                {labelSlots.map(t => <div key={t} style={{ position: "absolute", left: (hhmmToMin(t)-openMin)*PX_PER_MIN, fontSize: 12, color: TEXT_SUB }}>{t}</div>)}
-                <div style={{ height: 18 }} />
-              </div>
-              <div style={{ position: "relative", height: 96, background: "#f8f6f2", borderRadius: 14, border: `1px solid ${BORDER}` }}>
-                {labelSlots.map(t => <div key={t} style={{ position: "absolute", left: (hhmmToMin(t)-openMin)*PX_PER_MIN, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.08)" }} />)}
+              <div style={{ position: "relative", height: 124, background: "#f8f6f2", borderRadius: 14, border: `1px solid ${BORDER}`, marginTop: 4 }}>
+                {labelSlots.map(t => <div key={`lbl_${t}`} style={{ position: "absolute", left: (hhmmToMin(t)-openMin)*PX_PER_MIN, top: 4, fontSize: 12, color: TEXT_SUB }}>{t}</div>)}
+                {labelSlots.map(t => <div key={`grid_${t}`} style={{ position: "absolute", left: (hhmmToMin(t)-openMin)*PX_PER_MIN, top: 24, bottom: 0, width: 1, background: "rgba(0,0,0,0.08)" }} />)}
                 {dayReservations.map(r => {
                   const menu = menuMap.get(r.menuId);
                   const left = (hhmmToMin(r.start)-openMin)*PX_PER_MIN;
@@ -762,7 +759,7 @@ export default function ReceptionPage() {
                   const rgc = GENDER_COLORS[r.gender ?? "none"];
                   return (
                     <div key={r.id} onMouseDown={e => onMouseDown(e, r.id)} onContextMenu={e => onContextMenu(e, r.id)} onTouchStart={e => onTouchStart(e, r.id)} onTouchEnd={onTouchEnd} onTouchMove={onTouchEnd}
-                      style={{ position: "absolute", left, top: 4, height: 88, width: Math.max(width, 48), cursor: "grab", zIndex: 5, userSelect: "none", opacity: isCancelled ? 0.6 : 1 }}>
+                      style={{ position: "absolute", left, top: 28, height: 88, width: Math.max(width, 48), cursor: "grab", zIndex: 5, userSelect: "none", opacity: isCancelled ? 0.6 : 1 }}>
                       <div style={{ height: "100%", borderRadius: 10, padding: "6px 8px", background: mc.bg, border: `1.5px solid ${mc.border}`, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2, boxShadow: "0 2px 8px rgba(0,0,0,0.10)" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           <span style={{ fontSize: 10, fontWeight: 900, padding: "1px 5px", borderRadius: 4, background: mc.badge, color: mc.badgeTxt, flexShrink: 0 }}>{isCancelled?"取消":isTentative?"仮":isDone?"済":mc.label}</span>
