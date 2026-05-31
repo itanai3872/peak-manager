@@ -634,9 +634,9 @@ export default function ReceptionPage() {
   function updateReservation(id: string, patch: Partial<Reservation>) {
     setReservations(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
   }
-  // 仮予約 → 通常予約 に切り替え
-  function releaseTentative(id: string) {
-    setReservations(prev => prev.map(r => r.id === id ? { ...r, tentative: undefined } : r));
+  // 仮予約 ⇄ 通常予約 を切り替え（名簿の「仮予約」ボタンで黄緑のON/OFF）
+  function toggleTentative(id: string) {
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, tentative: r.tentative ? undefined : true } : r));
   }
 
   const PX_PER_MIN = useMemo(() => {
@@ -831,10 +831,7 @@ export default function ReceptionPage() {
           <div style={card()}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 8, flexWrap: "wrap" }}>
               <div style={{ fontSize: 18, fontWeight: 900 }}>予約入力</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => addReservation(false)} disabled={!canAdd} style={{ height: 36, padding: "0 16px", borderRadius: 10, border: canAdd?"1.5px solid #2563eb":`1px solid ${BORDER}`, background: canAdd?"#2563eb":"#f0f0f0", color: canAdd?"#fff":TEXT_SUB, fontWeight: 900, fontSize: 13, cursor: canAdd?"pointer":"not-allowed", whiteSpace: "nowrap" }}>＋ {isTask?taskLabel:"予約"}を追加</button>
-                <button onClick={() => addReservation(true)} disabled={!canAdd} title="黄緑色で仮予約として登録します" style={{ height: 36, padding: "0 14px", borderRadius: 10, border: canAdd?"1.5px solid #65a30d":`1px solid ${BORDER}`, background: canAdd?"#a3e635":"#f0f0f0", color: canAdd?"#365314":TEXT_SUB, fontWeight: 900, fontSize: 13, cursor: canAdd?"pointer":"not-allowed", whiteSpace: "nowrap" }}>仮予約</button>
-              </div>
+              <button onClick={() => addReservation(false)} disabled={!canAdd} style={{ height: 36, padding: "0 16px", borderRadius: 10, border: canAdd?"1.5px solid #2563eb":`1px solid ${BORDER}`, background: canAdd?"#2563eb":"#f0f0f0", color: canAdd?"#fff":TEXT_SUB, fontWeight: 900, fontSize: 13, cursor: canAdd?"pointer":"not-allowed", whiteSpace: "nowrap" }}>＋ {isTask?taskLabel:"予約"}を追加</button>
             </div>
             {(() => {
               const menu = menuMap.get(menuId); if (!menu) return null;
@@ -903,7 +900,7 @@ export default function ReceptionPage() {
                       </div>
                       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:3, flexShrink:0, width:108 }}>
                         <button onClick={e=>{e.stopPropagation();setEditingId(r.id);}} style={{ height:22, borderRadius:6, border:"1px solid #2563eb44", background:"#eff6ff", color:"#2563eb", cursor:"pointer", fontSize:10, fontWeight:900 }}>編集</button>
-                        {isTentative && <button onClick={e=>{e.stopPropagation();releaseTentative(r.id);}} title="仮予約を解除して通常予約にします" style={{ height:22, borderRadius:6, border:"1.5px solid #65a30d", background:"#ecfccb", color:"#365314", cursor:"pointer", fontSize:10, fontWeight:900 }}>本予約</button>}
+                        <button onClick={e=>{e.stopPropagation();toggleTentative(r.id);}} title={isTentative?"仮予約を解除して通常予約にします":"この予約を仮予約（黄緑）にします"} style={{ height:22, borderRadius:6, border:"1.5px solid #65a30d", background:isTentative?"#a3e635":"#ecfccb", color:isTentative?"#1a2e05":"#365314", cursor:"pointer", fontSize:10, fontWeight:900 }}>{isTentative?"解除":"仮予約"}</button>
                         <button onClick={e=>toggleCancelled(r.id,e)} style={{ height:22, borderRadius:6, border:isCancelled?"1.5px solid #dc2626":`1px solid ${BORDER}`, background:isCancelled?"#fee2e2":CARD_BG, color:isCancelled?"#dc2626":TEXT_SUB, cursor:"pointer", fontSize:10, fontWeight:900 }}>取消</button>
                         <button onClick={e=>{e.stopPropagation();confirmRemove(r.id);}} style={{ height:22, borderRadius:6, border:`1px solid ${BORDER}`, background:CARD_BG, color:TEXT_SUB, cursor:"pointer", fontSize:12 }}>×</button>
                       </div>
