@@ -71,13 +71,11 @@ const TEXT = "#1a1a1a";
 const TEXT_SUB = "rgba(0,0,0,0.45)";
 const BORDER = "rgba(0,0,0,0.10)";
 
-const MENU_COLORS = {
-  jp:   { bg: "linear-gradient(135deg,#dbeafe,#eff6ff)", border: "#3b82f6", badge: "#2563eb", badgeTxt: "#fff", label: "国内" },
-  int:  { bg: "linear-gradient(135deg,#fef3c7,#fffbeb)", border: "#f59e0b", badge: "#d97706", badgeTxt: "#fff", label: "INT" },
-  stu:  { bg: "linear-gradient(135deg,#ede9fe,#f5f3ff)", border: "#8b5cf6", badge: "#7c3aed", badgeTxt: "#fff", label: "学生" },
-  task: { bg: "linear-gradient(135deg,#f3f4f6,#f9fafb)", border: "#9ca3af", badge: "#6b7280", badgeTxt: "#fff", label: "業務" },
-};
-const DONE_COLORS = { bg: "linear-gradient(135deg,#dcfce7,#f0fdf4)", border: "#22c55e", badge: "#16a34a", badgeTxt: "#fff" };
+// Eパーク風の色分け：新規＝黄、リピート＝緑、業務＝茶
+const NEW_COLORS    = { bg: "linear-gradient(135deg,#fef9c3,#fefce8)", border: "#eab308", badge: "#ca8a04", badgeTxt: "#fff" }; // 新規＝黄
+const REPEAT_COLORS = { bg: "linear-gradient(135deg,#dcfce7,#f0fdf4)", border: "#22c55e", badge: "#16a34a", badgeTxt: "#fff" }; // リピート＝緑
+const TASK_COLORS   = { bg: "linear-gradient(135deg,#eaddcf,#f5efe6)", border: "#a8866a", badge: "#7c6650", badgeTxt: "#fff" }; // 業務＝茶
+const DONE_COLORS = { bg: "linear-gradient(135deg,#86efac,#bbf7d0)", border: "#15803d", badge: "#166534", badgeTxt: "#fff" }; // 済＝濃い緑
 const CANCEL_COLORS = { bg: "linear-gradient(135deg,#fee2e2,#fff1f2)", border: "#ef4444", badge: "#dc2626", badgeTxt: "#fff" };
 const TENTATIVE_COLORS = { bg: "linear-gradient(135deg,#ecfccb,#f7fee7)", border: "#84cc16", badge: "#65a30d", badgeTxt: "#fff", label: "仮" };
 const GENDER_COLORS = {
@@ -86,18 +84,21 @@ const GENDER_COLORS = {
   none:   { text: TEXT, badge: "#9ca3af", label: "－" },
 };
 
+function categoryLabel(menuId: string) {
+  if (menuId.startsWith("int")) return "INT";
+  if (menuId.startsWith("stu")) return "学生";
+  return "国内";
+}
 function getMenuColor(menuId: string, taskLabel?: string) {
-  if (menuId === "task") return { ...MENU_COLORS.task, label: taskLabel || "業務" };
-  if (menuId.startsWith("int")) return MENU_COLORS.int;
-  if (menuId.startsWith("stu")) return MENU_COLORS.stu;
-  return MENU_COLORS.jp;
+  if (menuId === "task") return { ...TASK_COLORS, label: taskLabel || "業務" };
+  const base = menuId.includes("new") ? NEW_COLORS : REPEAT_COLORS;
+  return { ...base, label: categoryLabel(menuId) };
 }
 
 function getMenuColorByValue(value: string) {
-  if (value === "task") return MENU_COLORS.task;
-  if (value.startsWith("int")) return MENU_COLORS.int;
-  if (value.startsWith("stu")) return MENU_COLORS.stu;
-  if (value.startsWith("jp")) return MENU_COLORS.jp;
+  if (value === "task") return TASK_COLORS;
+  if (value.includes("new")) return NEW_COLORS;
+  if (value.startsWith("jp") || value.startsWith("int") || value.startsWith("stu")) return REPEAT_COLORS;
   return null;
 }
 
