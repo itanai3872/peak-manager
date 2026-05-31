@@ -639,9 +639,14 @@ export default function ReceptionPage() {
     setReservations(prev => prev.map(r => r.id === id ? { ...r, tentative: r.tentative ? undefined : true } : r));
   }
 
-  const PX_PER_MIN = useMemo(() => {
-    if (typeof window === "undefined") return 2.0;
-    return Math.max(1.0, ((window.innerWidth - 120) / totalMin) * 0.92);
+  // SSR(初期表示)とブラウザ初回を必ず同じ値(2.0)にしてから、マウント後に画面幅に合わせて更新する。
+  // これで「目盛りとバーで縮尺がズレる」現象（サーバーとブラウザの不一致）を根本から防ぐ。
+  const [PX_PER_MIN, setPxPerMin] = useState(2.0);
+  useEffect(() => {
+    const compute = () => setPxPerMin(Math.max(1.0, ((window.innerWidth - 120) / totalMin) * 0.92));
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
   }, []);
 
   function onContextMenu(e: React.MouseEvent, id: string) { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, id }); }
@@ -761,15 +766,13 @@ export default function ReceptionPage() {
                     <div key={r.id} onMouseDown={e => onMouseDown(e, r.id)} onContextMenu={e => onContextMenu(e, r.id)} onTouchStart={e => onTouchStart(e, r.id)} onTouchEnd={onTouchEnd} onTouchMove={onTouchEnd}
                       style={{ position: "absolute", left, top: 28, height: 88, width: Math.max(width, 48), cursor: "grab", zIndex: 5, userSelect: "none", opacity: isCancelled ? 0.6 : 1 }}>
                       <div style={{ height: "100%", borderRadius: 10, padding: "6px 8px", background: mc.bg, border: `1.5px solid ${mc.border}`, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2, boxShadow: "0 2px 8px rgba(0,0,0,0.10)" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
                           <span style={{ fontSize: 10, fontWeight: 900, padding: "1px 5px", borderRadius: 4, background: mc.badge, color: mc.badgeTxt, flexShrink: 0 }}>{isCancelled?"取消":isTentative?"仮":isDone?"済":mc.label}</span>
+                          {r.menuId !== "task" && (r.gender ?? "none") !== "none" && <span style={{ fontSize: 10, fontWeight: 900, padding: "1px 4px", borderRadius: 4, background: rgc.badge, color: "#fff", flexShrink: 0 }}>{rgc.label}</span>}
                           <span style={{ fontSize: 11, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: TEXT }}>{r.start}–{r.end}</span>
                         </div>
                         {r.menuId !== "task" && (
-                          <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                            {(r.gender ?? "none") !== "none" && <span style={{ fontSize: 10, fontWeight: 900, padding: "1px 4px", borderRadius: 4, background: rgc.badge, color: "#fff", flexShrink: 0 }}>{rgc.label}</span>}
-                            <span style={{ fontSize: 12, fontWeight: 900, color: rgc.text, wordBreak: "break-all", lineHeight: 1.2 }}>{r.name}</span>
-                          </div>
+                          <div title={r.name} style={{ fontSize: 13, fontWeight: 900, color: rgc.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.2 }}>{r.name}</div>
                         )}
                         {r.menuId === "task" && r.memo && <div style={{ fontSize: 11, color: TEXT_SUB, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.memo}</div>}
                         <div style={{ fontSize: 10, color: TEXT_SUB, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
