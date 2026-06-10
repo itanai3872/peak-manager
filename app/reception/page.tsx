@@ -24,6 +24,7 @@ type Reservation = {
   gender?: Gender; createdAt: number; customLabel?: string;
   tentative?: boolean;
   updatedAt?: number; // ← PC間マージ用：最後に変更した時刻
+  deleted?: boolean;  // ← 削除フラグ（墓標）：リストから消さずに立てることで削除が全PCに同期される
 };
 type Menu = { id: string; label: string; minutes: number; price: number; isTask?: boolean; };
 
@@ -83,7 +84,9 @@ function mergeReservations(local: Reservation[], remote: Reservation[]): Reserva
     const ex = byId.get(r.id);
     if (!ex || resStamp(r) >= resStamp(ex)) byId.set(r.id, r); // 同時刻なら後勝ち（リモート優先）
   }
-  return Array.from(byId.values());
+  // 30日以上前に削除されたものは墓標を掃除する（データ肥大防止。全PCに伝播済みのはずなので安全）
+  const TOMBSTONE_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+  return Array.from(byId.values()).filter(r => !(r.deleted && Date.now() - resStamp(r) > TOMBSTONE_KEEP_MS));
 }
 function mergeHolidayLogs(a: HolidayLog, b: HolidayLog): HolidayLog {
   const out: HolidayLog = { ...a };
@@ -425,7 +428,7 @@ function EditModal({ reservation, menuMap, karuteNames, taskLabel, allReservatio
     for (const r of allReservations) {
       if (r.id === reservation.id) continue;
       if (r.date !== reservation.date) continue;
-      if (r.status === "cancelled") continue;
+      if (r.deleted || r.status === "cancelled") continue;
       const rs = hhmmToMin(r.start), re = hhmmToMin(r.end);
       if (ns < re && ne > rs) return r.name || "業務";
     }
@@ -681,7 +684,7 @@ export default function ReceptionPage() {
   }
 
   const dayReservations = useMemo(() =>
-    reservations.filter(r => r.date === selectedDate).sort((a,b) => hhmmToMin(a.start) - hhmmToMin(b.start)),
+    reservations.filter(r => r.date === selectedDate && !r.deleted).sort((a,b) => hhmmToMin(a.start) - hhmmToMin(b.start)),
     [reservations, selectedDate]);
 
   const sales = useMemo(() => {
@@ -689,8 +692,8 @@ export default function ReceptionPage() {
     let expected = 0, actual = 0;
     reservations.forEach(r => {
       if (monthKey(r.date) !== mk) return;
-      // 仮予約は本予約になるまで売上に含めない
-      if (r.status === "cancelled" || r.menuId === "task" || r.tentative) return;
+      // 仮予約は本予約になるまで売上に含めない。削除済みも除外
+      if (r.deleted || r.status === "cancelled" || r.menuId === "task" || r.tentative) return;
       const price = getPrice(r, menuMap);
       expected += price;
       if (r.status === "done") actual += price;
@@ -715,7 +718,7 @@ export default function ReceptionPage() {
     const map = new Map<string, number>();
     reservations.forEach(r => {
       if (monthKey(r.date) !== mk) return;
-      if (r.status === "cancelled" || r.menuId === "task") return;
+      if (r.deleted || r.status === "cancelled" || r.menuId === "task") return;
       map.set(r.date, (map.get(r.date) ?? 0) + 1);
     });
     return map;
@@ -726,7 +729,7 @@ export default function ReceptionPage() {
     for (const r of reservations) {
       if (r.date !== selectedDate) continue;
       if (r.id === excludeId) continue;
-      if (r.status === "cancelled") continue;
+      if (r.deleted || r.status === "cancelled") continue;
       const rs = hhmmToMin(r.start), re = hhmmToMin(r.end);
       if (ns < re && ne > rs) return r.name || "業務";
     }
@@ -761,7 +764,14 @@ export default function ReceptionPage() {
     e.stopPropagation();
     setReservations(prev => prev.map(r => r.id === id ? { ...r, status: r.status === "cancelled" ? "todo" : "cancelled", updatedAt: Date.now() } : r));
   }
-  function removeReservation(id: string) { setReservations(prev => prev.filter(r => r.id !== id)); setContextMenu(null); }
+  function removeReservation(id: string) {
+    // リストから消すのではなく削除フラグを立てる（墓標方式）。
+    // こうしないと、確認ダイアログ後のfocus再取得マージでクラウドの生存コピーが即復活してしまう。
+    const next = reservations.map(r => r.id === id ? { ...r, deleted: true, updatedAt: Date.now() } : r);
+    setReservations(next);
+    syncToSheet(next, holidayLog); // 削除は即送信（debounce側は保険）
+    setContextMenu(null);
+  }
   // 削除前に確認する（うっかり消し対策）
   function confirmRemove(id: string) {
     setContextMenu(null);
