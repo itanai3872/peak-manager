@@ -23,8 +23,13 @@ type Reservation = {
   status: ReservationStatus; customPrice?: number;
   gender?: Gender; createdAt: number; customLabel?: string;
   tentative?: boolean;
+  updatedAt?: number; // ← PC間マージ用：最後に変更した時刻
 };
 type Menu = { id: string; label: string; minutes: number; price: number; isTask?: boolean; };
+
+// 休日は「日付 → { on: 休日かどうか, ts: 変更時刻 }」で持つ。
+// 設定も解除も時刻つきで記録するので、PC間で“最後に操作したほうが勝つ”形で同期できる。
+type HolidayLog = Record<string, { on: boolean; ts: number }>;
 
 const MENUS: Menu[] = [
   { id: "jp_new_120", label: "国内新規（120分）", minutes: 120, price: 9000 },
@@ -62,6 +67,31 @@ function getLabelSlots() {
 }
 function getPrice(r: { menuId: string; customPrice?: number }, menuMap: Map<string, { price: number }>) {
   return r.customPrice !== undefined ? r.customPrice : (menuMap.get(r.menuId)?.price ?? 0);
+}
+
+// ───────────────────────────────────────────────────────────────
+// PC間マージ：件数ではなく「IDごとに updatedAt が新しいほうを採用」する。
+// これでキャンセル・実績済み・編集・移動が、件数が変わらなくても確実に同期される。
+// 和集合なので、相手側にしかない予約も消えない（＝手元データが消える事故を防ぐ）。
+// ───────────────────────────────────────────────────────────────
+function resStamp(r: Reservation) { return r.updatedAt ?? r.createdAt ?? 0; }
+function mergeReservations(local: Reservation[], remote: Reservation[]): Reservation[] {
+  const byId = new Map<string, Reservation>();
+  for (const r of local) { if (r && r.id) byId.set(r.id, r); }
+  for (const r of remote) {
+    if (!r || !r.id) continue;
+    const ex = byId.get(r.id);
+    if (!ex || resStamp(r) >= resStamp(ex)) byId.set(r.id, r); // 同時刻なら後勝ち（リモート優先）
+  }
+  return Array.from(byId.values());
+}
+function mergeHolidayLogs(a: HolidayLog, b: HolidayLog): HolidayLog {
+  const out: HolidayLog = { ...a };
+  for (const d of Object.keys(b || {})) {
+    const bv = b[d]; const av = out[d];
+    if (!av || (bv?.ts ?? 0) >= (av?.ts ?? 0)) out[d] = bv;
+  }
+  return out;
 }
 
 const BG = "#f5f0e8";
@@ -115,11 +145,15 @@ function inputSt(extra?: React.CSSProperties): React.CSSProperties {
   return { width: "100%", borderRadius: 12, border: `1px solid ${BORDER}`, background: "#fafafa", color: TEXT, padding: "11px 14px", outline: "none", fontSize: 15, ...extra };
 }
 
-async function syncToSheet(reservations: Reservation[]) {
+// ───────────────────────────────────────────────────────────────
+// Supabase 同期：予約（id="reception"）と休日（id="reception_holidays"）を
+// 同じ sync_data テーブルの“別の行”に保存する。テーブル追加・SQLは不要。
+// ───────────────────────────────────────────────────────────────
+async function syncToSheet(reservations: Reservation[], holidayLog: HolidayLog) {
   try {
     const SB_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const SB_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    await fetch((SB_URL ?? "") + "/rest/v1/sync_data", {
+    const res = await fetch((SB_URL ?? "") + "/rest/v1/sync_data", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -127,24 +161,61 @@ async function syncToSheet(reservations: Reservation[]) {
         "Authorization": "Bearer " + (SB_KEY ?? ""),
         "Prefer": "resolution=merge-duplicates",
       },
-      body: JSON.stringify({ id: "reception", data: reservations }),
+      // 新形式：予約と休日を同じ行（id:"reception"）にまとめて保存する
+      body: JSON.stringify({ id: "reception", data: { reservations, holidayLog } }),
     });
-  } catch {}
+    if (!res.ok) {
+      console.error("reception sync failed:", res.status, await res.text());
+      return false;
+    }
+    console.log(`reception synced: 予約${reservations.length}件 / 休日${Object.keys(holidayLog).length}件`);
+    return true;
+  } catch (err) {
+    console.error("reception sync error:", err);
+    return false;
+  }
 }
-async function loadFromSheet(): Promise<Reservation[] | null> {
+// （旧 syncHolidays は廃止：休日は syncToSheet で id:"reception" にまとめて保存する）
+// 予約・休日をまとめて1リクエストで取得
+async function loadAllFromCloud(): Promise<{ reservations: Reservation[] | null; holidayLog: HolidayLog | null }> {
   try {
     const SB_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const SB_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const res = await fetch(`${SB_URL}/rest/v1/sync_data?id=eq.reception&select=data`, {
-      headers: {
-        "apikey": SB_KEY!,
-        "Authorization": `Bearer ${SB_KEY}`,
-      },
+    const res = await fetch(`${SB_URL}/rest/v1/sync_data?id=in.(reception,reception_holidays)&select=id,data`, {
+      headers: { "apikey": SB_KEY!, "Authorization": `Bearer ${SB_KEY}` },
     });
     const rows = await res.json();
-    if (Array.isArray(rows) && rows.length > 0) { const raw = rows[0].data; return typeof raw === "string" ? JSON.parse(raw) : raw; }
-  } catch {}
-  return null;
+    let reservations: Reservation[] | null = null;
+    let holidayLog: HolidayLog | null = null;
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        if (row.id === "reception") {
+          const raw = row.data;
+          const v = typeof raw === "string" ? JSON.parse(raw) : raw;
+          if (Array.isArray(v)) {
+            // 旧形式：予約の配列のみ
+            reservations = v;
+          } else if (v && typeof v === "object") {
+            // 新形式：{ reservations, holidayLog }
+            if (Array.isArray(v.reservations)) reservations = v.reservations;
+            if (v.holidayLog && typeof v.holidayLog === "object" && !Array.isArray(v.holidayLog)) {
+              holidayLog = mergeHolidayLogs(holidayLog ?? {}, v.holidayLog as HolidayLog);
+            }
+          }
+        } else if (row.id === "reception_holidays") {
+          // 移行用の読み取りのみ（書き込みはしない・依存しない）
+          const raw = row.data;
+          const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+          if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+            holidayLog = mergeHolidayLogs(holidayLog ?? {}, obj as HolidayLog);
+          }
+        }
+      }
+    }
+    console.log(`reception loaded: 予約${reservations ? reservations.length : 0}件 / 休日${holidayLog ? Object.keys(holidayLog).length : 0}件`);
+    return { reservations, holidayLog };
+  } catch (err) { console.error("loadAllFromCloud error:", err); }
+  return { reservations: null, holidayLog: null };
 }
 
 function CustomSelect({ value, onChange, options }: {
@@ -440,7 +511,7 @@ function EditModal({ reservation, menuMap, karuteNames, taskLabel, allReservatio
 export default function ReceptionPage() {
   const [selectedDate, setSelectedDate] = useState(() => ymdOf(new Date()));
   const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [holidays, setHolidays] = useState<string[]>([]);
+  const [holidayLog, setHolidayLog] = useState<HolidayLog>({});
   const [showHolidayMgr, setShowHolidayMgr] = useState(false);
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "ok" | "offline">("idle");
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d; });
@@ -463,8 +534,25 @@ export default function ReceptionPage() {
   const isInitialLoad = useRef(true);
 
   const isTask = menuId === "task";
+
+  // 休日リスト（UI用）は holidayLog から導出する
+  const holidays = useMemo(
+    () => Object.keys(holidayLog).filter(d => holidayLog[d]?.on),
+    [holidayLog]
+  );
   const isHoliday = holidays.includes(selectedDate);
 
+  // クラウドから取得して“手元のデータに上書きせずマージ”する（月移動・タブ復帰で使う）
+  const reloadFromCloud = React.useCallback(() => {
+    setSyncStatus("syncing");
+    loadAllFromCloud().then(({ reservations: remoteRes, holidayLog: remoteLog }) => {
+      if (Array.isArray(remoteRes)) setReservations(prev => mergeReservations(prev, remoteRes));
+      if (remoteLog) setHolidayLog(prev => mergeHolidayLogs(prev, remoteLog));
+      setSyncStatus("ok");
+    }).catch(() => setSyncStatus("offline"));
+  }, []);
+
+  // ── 初回読み込み：手元（localStorage）と クラウド（Supabase）をマージ ──
   useEffect(() => {
     try {
       const savedLabel = localStorage.getItem(TASK_LABEL_KEY);
@@ -474,56 +562,83 @@ export default function ReceptionPage() {
         const list = JSON.parse(karuteRaw);
         setKaruteNames(list.map((k: any) => ({ kanji: k.kanji || "", kana: k.kana || "" })).sort((a: any, b: any) => a.kana.localeCompare(b.kana, "ja")));
       }
-      const holRaw = localStorage.getItem(HOLIDAY_KEY);
-      if (holRaw) { const h = JSON.parse(holRaw); if (Array.isArray(h)) setHolidays(h); }
     } catch {}
 
-    // --- データ読み込み（手元のデータを絶対に失わないための安全策つき） ---
-    setSyncStatus("syncing");
+    // 手元の予約
     let localData: Reservation[] = [];
     try {
       const raw = localStorage.getItem(LS_KEY);
       if (raw) { const p = JSON.parse(raw); if (Array.isArray(p)) localData = p; }
     } catch {}
-    loadFromSheet().then(remote => {
-      const remoteData = Array.isArray(remote) ? remote : [];
-      // クラウド側が手元より少ない（＝古い/空の可能性）なら、手元を優先する。
-      // これにより「古いクラウドデータで手元の予約が上書き消去される」事故を防ぐ。
-      const chosen = remoteData.length >= localData.length ? remoteData : localData;
-      if (chosen.length > 0) {
-        setReservations(chosen);
-        try { localStorage.setItem(LS_KEY, JSON.stringify(chosen)); } catch {}
+
+    // 手元の休日（旧形式＝文字列配列 / 新形式＝ログ の両方に対応）
+    let localLog: HolidayLog = {};
+    let wasOldFormat = false;
+    try {
+      const holRaw = localStorage.getItem(HOLIDAY_KEY);
+      if (holRaw) {
+        const parsed = JSON.parse(holRaw);
+        if (Array.isArray(parsed)) {
+          // 旧形式（文字列配列）→ HolidayLog 形式に変換する
+          wasOldFormat = true;
+          const now = Date.now();
+          for (const d of parsed) if (typeof d === "string") localLog[d] = { on: true, ts: now };
+          console.log("旧形式の休日データを変換:", localLog);
+        } else if (parsed && typeof parsed === "object") {
+          localLog = parsed;
+        }
       }
-      setSyncStatus(remoteData.length > 0 ? "ok" : "offline");
+    } catch {}
+
+    setSyncStatus("syncing");
+    loadAllFromCloud().then(({ reservations: remoteRes, holidayLog: remoteLog }) => {
+      const mergedRes = mergeReservations(localData, Array.isArray(remoteRes) ? remoteRes : []);
+      const mergedLog = mergeHolidayLogs(localLog, remoteLog ?? {});
+      setReservations(mergedRes);
+      setHolidayLog(mergedLog);
+      try { localStorage.setItem(LS_KEY, JSON.stringify(mergedRes)); } catch {}
+      try { localStorage.setItem(HOLIDAY_KEY, JSON.stringify(mergedLog)); } catch {}
+      // 旧形式から変換した場合は、初回読み込み時に必ずクラウド（id:"reception"）へまとめて送る
+      if (wasOldFormat) { syncToSheet(mergedRes, mergedLog); }
+      setSyncStatus("ok");
       isInitialLoad.current = false;
     }).catch(() => {
-      if (localData.length > 0) setReservations(localData);
+      setReservations(localData);
+      setHolidayLog(localLog);
       setSyncStatus("offline");
       isInitialLoad.current = false;
     });
   }, []);
 
+  // タブに戻ったとき自動で再取得（別PCの変更を拾う）
+  useEffect(() => {
+    const onFocus = () => { if (!isInitialLoad.current) reloadFromCloud(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [reloadFromCloud]);
+
+  // 予約・休日が変わったら：手元に控え＋Supabase（id:"reception"）へまとめて反映
   useEffect(() => {
     if (isInitialLoad.current) return;
     try { localStorage.setItem(LS_KEY, JSON.stringify(reservations)); } catch {}
     try { localStorage.setItem(TASK_LABEL_KEY, taskLabel); } catch {}
+    try { localStorage.setItem(HOLIDAY_KEY, JSON.stringify(holidayLog)); } catch {}
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     setSyncStatus("syncing");
     syncTimerRef.current = setTimeout(() => {
-      syncToSheet(reservations).then(() => setSyncStatus("ok")).catch(() => setSyncStatus("offline"));
+      syncToSheet(reservations, holidayLog).then(ok => setSyncStatus(ok ? "ok" : "offline")).catch(() => setSyncStatus("offline"));
     }, 1500);
-  }, [reservations, taskLabel]);
-
-  useEffect(() => {
-    try { localStorage.setItem(HOLIDAY_KEY, JSON.stringify(holidays)); } catch {}
-  }, [holidays]);
+  }, [reservations, taskLabel, holidayLog]);
 
   function toggleHoliday(ymd: string) {
-    setHolidays(prev => prev.includes(ymd) ? prev.filter(d => d !== ymd) : [...prev, ymd]);
+    const currentlyOn = !!holidayLog[ymd]?.on;
+    const next = { ...holidayLog, [ymd]: { on: !currentlyOn, ts: Date.now() } };
+    setHolidayLog(next);
+    syncToSheet(reservations, next); // 変更の瞬間に id:"reception" へ即送信（debounce側は保険）
   }
 
   function exportData() {
-    const data = { reservations, holidays, taskLabel, exportedAt: new Date().toISOString() };
+    const data = { reservations, holidays, holidayLog, taskLabel, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -537,8 +652,18 @@ export default function ReceptionPage() {
     reader.onload = ev => {
       try {
         const data = JSON.parse(ev.target?.result as string);
-        if (data.reservations) { setReservations(data.reservations); syncToSheet(data.reservations); }
-        if (data.holidays) setHolidays(data.holidays);
+        const newRes: Reservation[] = Array.isArray(data.reservations) ? data.reservations : reservations;
+        let newLog: HolidayLog = holidayLog;
+        if (data.holidayLog && typeof data.holidayLog === "object" && !Array.isArray(data.holidayLog)) {
+          newLog = data.holidayLog;
+        } else if (Array.isArray(data.holidays)) {
+          const log: HolidayLog = {};
+          for (const d of data.holidays) if (typeof d === "string") log[d] = { on: true, ts: Date.now() };
+          newLog = log;
+        }
+        if (Array.isArray(data.reservations)) setReservations(newRes);
+        setHolidayLog(newLog);
+        syncToSheet(newRes, newLog);
         if (data.taskLabel) setTaskLabel(data.taskLabel);
         alert("復元しました");
       } catch { alert("ファイルが正しくありません"); }
@@ -622,18 +747,19 @@ export default function ReceptionPage() {
       return;
     }
     const cp = customPriceInput !== "" ? Number(customPriceInput) : undefined;
-    setReservations(prev => [...prev, { id: uid(), date: selectedDate, start, end: endStr, name: isTask ? taskLabel : name.trim(), menuId, memo: memo.trim(), status: "todo", customPrice: cp, gender: isTask ? "none" : gender, createdAt: Date.now(), tentative: tentative ? true : undefined }]);
+    const now = Date.now();
+    setReservations(prev => [...prev, { id: uid(), date: selectedDate, start, end: endStr, name: isTask ? taskLabel : name.trim(), menuId, memo: memo.trim(), status: "todo", customPrice: cp, gender: isTask ? "none" : gender, createdAt: now, updatedAt: now, tentative: tentative ? true : undefined }]);
     setName(""); setMemo(""); setGender("none");
     const m = menuMap.get(menuId);
     setCustomPriceInput(m?.isTask ? "" : String(m?.price ?? ""));
   }
 
   function toggleDone(id: string) {
-    setReservations(prev => prev.map(r => { if (r.id !== id) return r; if (r.status === "cancelled") return r; return { ...r, status: r.status === "done" ? "todo" : "done" }; }));
+    setReservations(prev => prev.map(r => { if (r.id !== id) return r; if (r.status === "cancelled") return r; return { ...r, status: r.status === "done" ? "todo" : "done", updatedAt: Date.now() }; }));
   }
   function toggleCancelled(id: string, e: React.MouseEvent) {
     e.stopPropagation();
-    setReservations(prev => prev.map(r => r.id === id ? { ...r, status: r.status === "cancelled" ? "todo" : "cancelled" } : r));
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, status: r.status === "cancelled" ? "todo" : "cancelled", updatedAt: Date.now() } : r));
   }
   function removeReservation(id: string) { setReservations(prev => prev.filter(r => r.id !== id)); setContextMenu(null); }
   // 削除前に確認する（うっかり消し対策）
@@ -647,11 +773,11 @@ export default function ReceptionPage() {
   }
   // ③ 名簿内で内容を変更（編集モーダルから呼ばれる）
   function updateReservation(id: string, patch: Partial<Reservation>) {
-    setReservations(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, ...patch, updatedAt: Date.now() } : r));
   }
   // 仮予約 ⇄ 通常予約 を切り替え（名簿の「仮予約」ボタンで黄緑のON/OFF）
   function toggleTentative(id: string) {
-    setReservations(prev => prev.map(r => r.id === id ? { ...r, tentative: r.tentative ? undefined : true } : r));
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, tentative: r.tentative ? undefined : true, updatedAt: Date.now() } : r));
   }
 
   // SSR(初期表示)とブラウザ初回を必ず同じ値(2.0)にしてから、マウント後に画面幅に合わせて更新する。
@@ -682,7 +808,7 @@ export default function ReceptionPage() {
         if (rv.id !== draggingRef.current!.id) return rv;
         const dur = hhmmToMin(rv.end) - hhmmToMin(rv.start);
         const endMin = clamp(newStartMin + dur, openMin + snap, closeMin);
-        return { ...rv, start: minToHHMM(clamp(endMin - dur, openMin, closeMin - snap)), end: minToHHMM(endMin) };
+        return { ...rv, start: minToHHMM(clamp(endMin - dur, openMin, closeMin - snap)), end: minToHHMM(endMin), updatedAt: Date.now() };
       }));
     }
     function onMouseUp() { draggingRef.current = null; window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); }
@@ -733,6 +859,7 @@ export default function ReceptionPage() {
           <label style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, border: "1px solid #2563eb44", background: "#dbeafe", color: "#2563eb", cursor: "pointer", fontWeight: 700 }}>
             📥 復元<input type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
           </label>
+          <button onClick={reloadFromCloud} title="他のPCの変更を今すぐ取り込みます" style={{ fontSize: 13, padding: "5px 14px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#f0f0f0", color: TEXT_SUB, cursor: "pointer", fontWeight: 700 }}>🔄 再取得</button>
           {syncLabel && <div style={{ fontSize: 13, fontWeight: 700, color: syncColor }}>{syncLabel}</div>}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
             <span style={{ color: TEXT_SUB }}>見込み</span><span style={{ fontWeight: 900 }}>¥{money(sales.expected)}</span>
@@ -750,13 +877,13 @@ export default function ReceptionPage() {
         {showHolidayMgr && (
           <div style={{ ...card(), background: "#fff8f8", border: "1.5px solid #fca5a5" }}>
             <div style={{ fontSize: 15, fontWeight: 900, marginBottom: 10, color: "#dc2626" }}>🗓 休日設定</div>
-            <div style={{ fontSize: 13, color: TEXT_SUB, marginBottom: 12 }}>カレンダーで日付を選択 → 下のボタンで休日設定／解除</div>
+            <div style={{ fontSize: 13, color: TEXT_SUB, marginBottom: 12 }}>カレンダーで日付を選択 → 下のボタンで休日設定／解除（全PCに同期されます）</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ fontSize: 15, fontWeight: 700 }}>選択中：{selectedDate}</div>
               <button onClick={() => toggleHoliday(selectedDate)} style={{ height: 36, padding: "0 18px", borderRadius: 10, fontWeight: 900, cursor: "pointer", fontSize: 14, border: isHoliday ? "1.5px solid #16a34a" : "1.5px solid #dc2626", background: isHoliday ? "#dcfce7" : "#fee2e2", color: isHoliday ? "#16a34a" : "#dc2626" }}>
                 {isHoliday ? "✓ 休日を解除する" : "✕ 休日にする"}
               </button>
-              {holidays.length > 0 && <div style={{ fontSize: 13, color: TEXT_SUB }}>設定済み：{holidays.sort().join("　")}</div>}
+              {holidays.length > 0 && <div style={{ fontSize: 13, color: TEXT_SUB }}>設定済み：{[...holidays].sort().join("　")}</div>}
             </div>
           </div>
         )}
@@ -816,7 +943,7 @@ export default function ReceptionPage() {
               <div style={{ fontSize: 18, fontWeight: 900 }}>{monthCursor.getFullYear()} / {monthCursor.getMonth()+1}</div>
               <div style={{ display: "flex", gap: 6 }}>
                 {(["◀","今日","▶"] as const).map((label, i) => (
-                  <button key={label} onClick={() => { if(i===1){const t=new Date();t.setDate(1);t.setHours(0,0,0,0);setMonthCursor(t);setSelectedDate(ymdOf(new Date()));}else{const d=new Date(monthCursor);d.setMonth(d.getMonth()+(i===0?-1:1));setMonthCursor(d);} }} style={miniBtn()}>{label}</button>
+                  <button key={label} onClick={() => { if(i===1){const t=new Date();t.setDate(1);t.setHours(0,0,0,0);setMonthCursor(t);setSelectedDate(ymdOf(new Date()));}else{const d=new Date(monthCursor);d.setMonth(d.getMonth()+(i===0?-1:1));setMonthCursor(d);} reloadFromCloud(); }} style={miniBtn()}>{label}</button>
                 ))}
               </div>
             </div>
